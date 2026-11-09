@@ -1,0 +1,24 @@
+# Describes the existing style; not applied to the whole code base in bulk.
+# Use it for new code or format-on-save of edited lines.
+Language: Cpp
+Standard: c++17
+UseTab: ForIndentation
+TabWidth: 4
+IndentWidth: 4
+ColumnLimit: 0
+NamespaceIndentation: All
+AccessModifierOffset: -4
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterStruct: true
+  AfterClass: true
+  AfterNamespace: true
+  AfterControlStatement: Never
+  BeforeElse: true
+  BeforeCatch: true
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AlignTrailingComments: true
+PointerAlignment: Left
+SortIncludes: Never

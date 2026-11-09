@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-msvc
+            os: windows-latest
+            cxx: cl
+          - name: ubuntu-gcc
+            os: ubuntu-latest
+            cxx: g++
+          - name: ubuntu-clang
+            os: ubuntu-latest
+            cxx: clang++
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Ninja
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake --preset release -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+      - name: Build (library tests, benchmarks, examples)
+        run: cmake --build --preset release
+
+      - name: Test
+        run: ctest --preset release
+
+      - name: Run examples
+        shell: bash
+        run: |
+          build/release/examples/fixed128_example_basic_usage
+          build/release/examples/fixed128_example_xyz_lane_packing
+
+      - name: Install and consume with find_package
+        shell: bash
+        run: |
+          cmake --install build/release --prefix "$PWD/install"
+          cmake -S tests/package_consumer -B build/consumer -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_PREFIX_PATH="$PWD/install"
+          cmake --build build/consumer
+          build/consumer/consumer

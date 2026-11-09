@@ -1,0 +1,3 @@
+# Stack Overflow code is used with attribution only
+
+Some conversions (`detail/avx2/limited.hpp` and `int64/uint64_to_double_fast_precise`) come from answers by Mysticial and wim on Stack Overflow, which are licensed CC BY-SA, while the library is MIT. We credit the authors with links in the source and in the README, which is common practice for short snippets, and chose not to ask the authors for an MIT relicense. This leaves a known licensing gray area; if it ever matters (e.g. a consumer's legal review), the options are asking the authors for permission or replacing those functions with an independent implementation.
