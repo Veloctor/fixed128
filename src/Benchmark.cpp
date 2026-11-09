@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
 		return 1;
 	::benchmark::RunSpecifiedBenchmarks();
 	system("pause");
-} int main(int, char**);
+}
 #else
 int main()
 {
