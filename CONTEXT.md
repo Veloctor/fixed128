@@ -1,6 +1,6 @@
 # fixed128
 
-用 AVX2 在 `double` 与 128 位定点数之间做高速 4 路转换的 header-only 库，服务于超大尺度坐标（≥ 百万光年范围、≤ 0.1 mm 精度）的表示与运算。
+用 AVX2（或可移植标量实现）在 `double` 与 128 位定点数之间做高速 4 路转换的 header-only 库，服务于超大尺度坐标（≥ 百万光年范围、≤ 0.1 mm 精度）的表示与运算。
 
 ## Language
 
@@ -33,7 +33,14 @@ Fixed128 的高 64 位与低 64 位两半。
 4 个独立数值按 SoA 打包的 SIMD 类型（Upper 一个寄存器、Lower 一个寄存器），每个 lane 的语义与对应标量类型完全一致。
 
 **Backend**:
-x4 类型背后的某一套指令集实现。目前只有 AVX2 backend；将来可能有可移植标量或 NEON backend，它们的每个 lane 语义必须一致。
+x4 类型与转换函数背后的某一套实现，编译期选定。现有 AVX2 与 Scalar（可移植标量）两个，将来可能有 NEON；各 backend 的每个 lane 结果必须逐位一致。
+
+**Primitive**（向量原语）:
+`detail` 里供转换算法使用的最小向量操作（如 `sllv`、`blendv`）。每个 backend 各实现一套：AVX2 下是一条 intrinsic，Scalar 下逐 lane 精确模拟该指令。
+
+**Lane 类型**（`double4`、`long4`、`ulong4`、`float4`）:
+公开 API 使用的 4-lane POD 结构体，成员 `x, y, z, w` 即 lane 0..3，在所有 backend 上布局相同。
+_Avoid_: 把 `__m256d` 等寄存器类型当作公开类型
 
 ### 转换函数的有效范围后缀
 

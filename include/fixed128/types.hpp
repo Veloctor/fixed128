@@ -1,14 +1,28 @@
 #pragma once
-#include <immintrin.h>
+#include <cstdint>
+
+// Public 4-lane value types: plain structs with the same memory layout on every backend (x is lane 0).
+// The backends load them into SIMD registers internally; when inlined, the compilers remove the copies.
 
 namespace fx128
 {
-	using double4 = __m256d;
-	using float4 = __m128;
-	using long4 = __m256i;
-	using ulong4 = __m256i;
-	using int4 = __m128i;
-	using uint4 = __m128i;
-	using int8 = __m256i;
-	using uint8 = __m256i;
+	struct alignas(32) double4
+	{
+		double x, y, z, w;
+	};
+
+	struct alignas(32) long4
+	{
+		int64_t x, y, z, w;
+	};
+
+	struct alignas(32) ulong4
+	{
+		uint64_t x, y, z, w;
+	};
+
+	struct alignas(16) float4
+	{
+		float x, y, z, w;
+	};
 }

@@ -7,16 +7,62 @@
 #include <iomanip>
 #include <ostream>
 
+// x86-64 uses the carry intrinsics; defining FIXED128_HAS_CARRY_INTRINSICS=0 selects the portable code (used by the tests).
+#ifndef FIXED128_HAS_CARRY_INTRINSICS
+#if defined(_M_X64) || defined(__x86_64__)
+#define FIXED128_HAS_CARRY_INTRINSICS 1
+#else
+#define FIXED128_HAS_CARRY_INTRINSICS 0
+#endif
+#endif
+#if FIXED128_HAS_CARRY_INTRINSICS
 #if defined(_MSC_VER)
 #include <intrin.h>
 #else
 #include <x86intrin.h>
+#endif
 #endif
 
 // Scalar fixed-point types: fixed64 and fixed128.
 
 namespace fx128
 {
+	namespace detail
+	{
+		// *out = a + b + carry, returns the carry out. Uses the x86-64 carry intrinsics where available.
+		inline unsigned char addcarry(unsigned char carry, uint64_t a, uint64_t b, uint64_t* out)
+		{
+#if FIXED128_HAS_CARRY_INTRINSICS
+			// The intrinsics take unsigned long long*, which differs from uint64_t (unsigned long) on LP64 platforms.
+			unsigned long long r;
+			carry = _addcarry_u64(carry, a, b, &r);
+			*out = r;
+			return carry;
+#else
+			const uint64_t s = a + b;
+			const uint64_t r = s + carry;
+			*out = r;
+			return static_cast<unsigned char>((s < a) | (r < s));
+#endif
+		}
+
+		// *out = a - b - borrow, returns the borrow out.
+		inline unsigned char subborrow(unsigned char borrow, uint64_t a, uint64_t b, uint64_t* out)
+		{
+#if FIXED128_HAS_CARRY_INTRINSICS
+			unsigned long long r;
+			borrow = _subborrow_u64(borrow, a, b, &r);
+			*out = r;
+			return borrow;
+#else
+			const uint64_t d = a - b;
+			const uint64_t r = d - borrow;
+			*out = r;
+			return static_cast<unsigned char>((a < b) | (d < borrow));
+#endif
+		}
+	}
+
 	constexpr double ULongMaxValueSD = static_cast<double>(ULLONG_MAX); // == 2^64
 
 	struct fixed64
@@ -135,9 +181,7 @@ namespace fx128
 
 		fixed128& operator+=(fixed64 value)
 		{
-			ull lo;
-			upper += _addcarry_u64(0, lower, value.ubits, &lo);
-			lower = lo;
+			upper += detail::addcarry(0, lower, value.ubits, &lower);
 			return *this;
 		}
 
@@ -174,25 +218,21 @@ namespace fx128
 
 		fixed128 operator+(const fixed128& b) const
 		{
-			ull lo, hi;
-			auto carry = _addcarry_u64(0, lower, b.lower, &lo);
-			_addcarry_u64(carry, upper, b.upper, &hi);
+			uint64_t lo, hi;
+			auto carry = detail::addcarry(0, lower, b.lower, &lo);
+			detail::addcarry(carry, upper, b.upper, &hi);
 			return fixed128{static_cast<int64_t>(hi), static_cast<int64_t>(lo)};
 		}
 
 		fixed128 operator-(const fixed128& b) const
 		{
-			ull lo, hi;
-			auto borrow = _subborrow_u64(0, lower, b.lower, &lo);
-			_subborrow_u64(borrow, upper, b.upper, &hi);
+			uint64_t lo, hi;
+			auto borrow = detail::subborrow(0, lower, b.lower, &lo);
+			detail::subborrow(borrow, upper, b.upper, &hi);
 			return fixed128{static_cast<int64_t>(hi), static_cast<int64_t>(lo)};
 		}
 
 		friend std::ostream& operator<<(std::ostream& os, const fixed128& i128);
-
-	private:
-		// The carry intrinsics take unsigned long long*, which differs from uint64_t (unsigned long) on LP64 platforms.
-		using ull = unsigned long long;
 	};
 
 	inline std::ostream& operator<<(std::ostream& os, const fixed128& i128)

@@ -2,7 +2,7 @@
 #include "mismatch_log.hpp"
 #include "test_helpers.hpp"
 
-#include <fixed128/detail/avx2/limited.hpp>
+#include <fixed128/detail/limited.hpp>
 
 using namespace fx128;
 

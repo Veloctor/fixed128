@@ -1,5 +1,6 @@
 #pragma once
-#include "avx2_convert.hpp"
+#include "convert.hpp"
+#include "detail/native.hpp"
 #include "scalar.hpp"
 #include "types.hpp"
 
@@ -8,8 +9,8 @@
 #include <cmath>
 #include <cstdint>
 
-// 4-lane SIMD fixed-point types: fixed64x4 and fixed128x4.
-// Note: the constructors taking 4 scalars follow _mm256_set_epi64x order, so the first argument is lane 3.
+// 4-lane fixed-point types: fixed64x4 and fixed128x4, structure of arrays of the public 4-lane types.
+// Note: the constructors taking 4 scalars take them in lane order, like the members x, y, z, w: the first argument is lane 0.
 
 namespace fx128
 {
@@ -20,55 +21,58 @@ namespace fx128
 		explicit fixed64x4(double fp)
 		{
 			fp *= std::pow(2.0, FIXED128_FRAC_BITS);
-			auto vfp = _mm256_set1_pd(fp);
-			bits = double_to_int64_fast(vfp);
+			bits = double_to_int64_fast(double4{fp, fp, fp, fp});
 		}
 
 		explicit fixed64x4(int64_t i)
 		{
 			i <<= FIXED128_FRAC_BITS;
-			bits = _mm256_set1_epi64x(i);
+			bits = long4{i, i, i, i};
 		}
 
 		explicit fixed64x4(const long4& i)
 		{
-			bits = _mm256_slli_epi64(i, FIXED128_FRAC_BITS);
+			bits = detail::to_long4(detail::slli(detail::load(i), FIXED128_FRAC_BITS));
 		}
 
-		explicit fixed64x4(double4 vfp)
+		explicit fixed64x4(const double4& fp)
 		{
-			const auto vfactor = _mm256_set1_pd(std::pow(2.0, FIXED128_FRAC_BITS));
-			vfp = _mm256_mul_pd(vfp, vfactor);
-			bits = double_to_int64_fast(vfp);
+			using namespace detail;
+			const vd vfactor = set1_d(std::pow(2.0, FIXED128_FRAC_BITS));
+			const vd vfp = mul_d(load(fp), vfactor);
+			bits = double_to_int64_fast(to_double4(vfp));
 		}
 
-		explicit fixed64x4(float4 vfp32)
+		explicit fixed64x4(const float4& fp32)
 		{
-			const auto vfactor = _mm_set_ps1(static_cast<float>(std::pow(2.0f, FIXED128_FRAC_BITS)));
-			vfp32 = _mm_mul_ps(vfp32, vfactor);
-			auto vfp = _mm256_cvtps_pd(vfp32);
-			bits = double_to_int64_fast(vfp);
+			using namespace detail;
+			const vf vfactor = set1_f(static_cast<float>(std::pow(2.0f, FIXED128_FRAC_BITS)));
+			const vf vfp32 = mul_f(load(fp32), vfactor);
+			const vd vfp = cvt_f_to_d(vfp32);
+			bits = double_to_int64_fast(to_double4(vfp));
 		}
 
 		explicit operator double4() const
 		{
-			const auto vfactor = _mm256_set1_pd(std::pow(2.0, -FIXED128_FRAC_BITS));
-			auto vfp = int64_to_double_fast_precise(bits);
-			return _mm256_mul_pd(vfp, vfactor);
+			using namespace detail;
+			const vd vfactor = set1_d(std::pow(2.0, -FIXED128_FRAC_BITS));
+			const vd vfp = load(int64_to_double_fast_precise(bits));
+			return to_double4(mul_d(vfp, vfactor));
 		}
 
 		explicit operator float4() const
 		{
-			const auto vfactor = _mm_set_ps1(static_cast<float>(std::pow(2.0f, -FIXED128_FRAC_BITS)));
-			auto vfp = int64_to_double_fast_precise(bits);
-			auto vfp32 = _mm256_cvtpd_ps(vfp);
-			return _mm_mul_ps(vfp32, vfactor);
+			using namespace detail;
+			const vf vfactor = set1_f(static_cast<float>(std::pow(2.0f, -FIXED128_FRAC_BITS)));
+			const vd vfp = load(int64_to_double_fast_precise(bits));
+			const vf vfp32 = cvt_d_to_f(vfp);
+			return to_float4(mul_f(vfp32, vfactor));
 		}
 	};
 
 	struct fixed128x4
 	{
-		long4 upper, lower;
+		ulong4 upper, lower;
 
 		explicit fixed128x4(const double4& x)
 		{
@@ -77,41 +81,42 @@ namespace fx128
 
 		explicit fixed128x4(double x)
 		{
-			auto x4 = _mm256_set1_pd(x);
-			*this = fixed128x4{x4};
+			*this = fixed128x4{double4{x, x, x, x}};
 		}
 
 		fixed128x4()
 		{
-			upper = _mm256_setzero_si256();
-			lower = _mm256_setzero_si256();
+			upper = ulong4{0, 0, 0, 0};
+			lower = ulong4{0, 0, 0, 0};
 		}
 
+		// lanes 0, 1, 2, 3
 		fixed128x4(fixed64 x, fixed64 y, fixed64 z, fixed64 w)
 		{
-			upper = _mm256_setzero_si256();
-			lower = _mm256_set_epi64x(x.sbits, y.sbits, z.sbits, w.sbits);
+			upper = ulong4{0, 0, 0, 0};
+			lower = ulong4{x.ubits, y.ubits, z.ubits, w.ubits};
 		}
 
 		fixed128x4(fixed64 x)
 		{
-			upper = _mm256_setzero_si256();
-			lower = _mm256_set1_epi64x(x.sbits);
+			upper = ulong4{0, 0, 0, 0};
+			lower = ulong4{x.ubits, x.ubits, x.ubits, x.ubits};
 		}
 
 		fixed128x4(fixed128 x)
 		{
-			upper = _mm256_set1_epi64x(x.upper);
-			lower = _mm256_set1_epi64x(x.lower);
+			upper = ulong4{x.upper, x.upper, x.upper, x.upper};
+			lower = ulong4{x.lower, x.lower, x.lower, x.lower};
 		}
 
+		// lanes 0, 1, 2, 3
 		fixed128x4(fixed128 x, fixed128 y, fixed128 z, fixed128 w)
 		{
-			upper = _mm256_set_epi64x(x.upper, y.upper, z.upper, w.upper);
-			lower = _mm256_set_epi64x(x.lower, y.lower, z.lower, w.lower);
+			upper = ulong4{x.upper, y.upper, z.upper, w.upper};
+			lower = ulong4{x.lower, y.lower, z.lower, w.lower};
 		}
 
-		fixed128x4(long4 upper, long4 lower)
+		fixed128x4(const ulong4& upper, const ulong4& lower)
 		{
 			this->upper = upper;
 			this->lower = lower;
@@ -121,10 +126,9 @@ namespace fx128
 		fixed128 operator[](int i) const
 		{
 			assert(i >= 0 && i < 4);
-			alignas(32) int64_t u[4], l[4];
-			_mm256_store_si256(reinterpret_cast<__m256i*>(u), upper);
-			_mm256_store_si256(reinterpret_cast<__m256i*>(l), lower);
-			return fixed128{u[i], l[i]};
+			const uint64_t u[4] = {upper.x, upper.y, upper.z, upper.w};
+			const uint64_t l[4] = {lower.x, lower.y, lower.z, lower.w};
+			return fixed128{static_cast<int64_t>(u[i]), static_cast<int64_t>(l[i])};
 		}
 
 		explicit operator double4() const
@@ -132,45 +136,53 @@ namespace fx128
 			return fixed128_to_double(upper, lower);
 		}
 
-		fixed128x4 operator+(fixed128x4 value) const
+		fixed128x4 operator+(const fixed128x4& value) const
 		{
-			const long4 sign_mask = _mm256_set1_epi64x(LLONG_MIN);
-			auto retlower = _mm256_add_epi64(lower, value.lower);
-			long4 carry = _mm256_cmpgt_epi64(_mm256_add_epi64(value.lower, sign_mask), _mm256_add_epi64(retlower, sign_mask));
-			auto retupper = _mm256_sub_epi64(_mm256_add_epi64(upper, value.upper), carry);
-			return {retupper, retlower};
+			using namespace detail;
+			const vi sign_mask = set1_i(LLONG_MIN);
+			const vi vlower = load(value.lower);
+			auto retlower = add_i(load(lower), vlower);
+			vi carry = cmpgt_i(add_i(vlower, sign_mask), add_i(retlower, sign_mask));
+			auto retupper = sub_i(add_i(load(upper), load(value.upper)), carry);
+			return {to_ulong4(retupper), to_ulong4(retlower)};
 		}
 
-		fixed128x4 operator+(long4 rlower) const
+		fixed128x4 operator+(const ulong4& rlower) const
 		{
-			const long4 sign_mask = _mm256_set1_epi64x(LLONG_MIN);
-			auto retlower = _mm256_add_epi64(lower, rlower);
-			long4 carry = _mm256_cmpgt_epi64(_mm256_add_epi64(rlower, sign_mask), _mm256_add_epi64(retlower, sign_mask));
-			auto retupper = _mm256_sub_epi64(upper, carry);
-			return {retupper, retlower};
+			using namespace detail;
+			const vi sign_mask = set1_i(LLONG_MIN);
+			const vi vrlower = load(rlower);
+			auto retlower = add_i(load(lower), vrlower);
+			vi carry = cmpgt_i(add_i(vrlower, sign_mask), add_i(retlower, sign_mask));
+			auto retupper = sub_i(load(upper), carry);
+			return {to_ulong4(retupper), to_ulong4(retlower)};
 		}
 
-		fixed128x4 operator-(fixed128x4 value) const
+		fixed128x4 operator-(const fixed128x4& value) const
 		{
-			const long4 sign_mask = _mm256_set1_epi64x(LLONG_MIN);
-			long4 up = _mm256_sub_epi64(upper, value.upper);
-			long4 carry = _mm256_cmpgt_epi64(_mm256_add_epi64(value.lower, sign_mask), _mm256_add_epi64(lower, sign_mask));
-			auto retlower = _mm256_sub_epi64(lower, value.lower);
-			auto retupper = _mm256_add_epi64(up, carry);
-			return {retupper, retlower};
+			using namespace detail;
+			const vi sign_mask = set1_i(LLONG_MIN);
+			const vi vlower = load(lower), value_lower = load(value.lower);
+			vi up = sub_i(load(upper), load(value.upper));
+			vi carry = cmpgt_i(add_i(value_lower, sign_mask), add_i(vlower, sign_mask));
+			auto retlower = sub_i(vlower, value_lower);
+			auto retupper = add_i(up, carry);
+			return {to_ulong4(retupper), to_ulong4(retlower)};
 		}
 
-		fixed128x4 operator-(long4 value) const
+		fixed128x4 operator-(const ulong4& rlower) const
 		{
-			const long4 sign_mask = _mm256_set1_epi64x(LLONG_MIN);
-			long4 carry = _mm256_cmpgt_epi64(_mm256_add_epi64(value, sign_mask), _mm256_add_epi64(lower, sign_mask));
-			auto retlower = _mm256_sub_epi64(lower, value);
-			auto retupper = _mm256_add_epi64(upper, carry);
-			return {retupper, retlower};
+			using namespace detail;
+			const vi sign_mask = set1_i(LLONG_MIN);
+			const vi vlower = load(lower), vrlower = load(rlower);
+			vi carry = cmpgt_i(add_i(vrlower, sign_mask), add_i(vlower, sign_mask));
+			auto retlower = sub_i(vlower, vrlower);
+			auto retupper = add_i(load(upper), carry);
+			return {to_ulong4(retupper), to_ulong4(retlower)};
 		}
-		fixed128x4& operator+=(long4 value) { return *this = *this + value; }
-		fixed128x4& operator+=(fixed128x4 value) { return *this = *this + value; }
-		fixed128x4& operator-=(long4 value) { return *this = *this - value; }
-		fixed128x4& operator-=(fixed128x4 value) { return *this = *this - value; }
+		fixed128x4& operator+=(const ulong4& value) { return *this = *this + value; }
+		fixed128x4& operator+=(const fixed128x4& value) { return *this = *this + value; }
+		fixed128x4& operator-=(const ulong4& value) { return *this = *this - value; }
+		fixed128x4& operator-=(const fixed128x4& value) { return *this = *this - value; }
 	};
 }

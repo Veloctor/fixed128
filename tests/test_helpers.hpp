@@ -18,22 +18,26 @@ constexpr int kRandomCount = 1 << 18;
 using lanes_i64 = std::array<uint64_t, 4>;
 using lanes_f64 = std::array<double, 4>;
 
-inline lanes_i64 to_lanes(__m256i v)
+inline lanes_i64 to_lanes(const fx128::ulong4& v) { return {v.x, v.y, v.z, v.w}; }
+inline lanes_i64 to_lanes(const fx128::long4& v)
 {
-	alignas(32) lanes_i64 a;
-	_mm256_store_si256(reinterpret_cast<__m256i*>(a.data()), v);
-	return a;
+	return {static_cast<uint64_t>(v.x), static_cast<uint64_t>(v.y), static_cast<uint64_t>(v.z), static_cast<uint64_t>(v.w)};
 }
+inline lanes_f64 to_lanes(const fx128::double4& v) { return {v.x, v.y, v.z, v.w}; }
 
-inline lanes_f64 to_lanes(__m256d v)
+// Converts to whichever of long4 / ulong4 the function under test takes.
+struct int_lanes
 {
-	alignas(32) lanes_f64 a;
-	_mm256_store_pd(a.data(), v);
-	return a;
-}
+	lanes_i64 a;
+	operator fx128::ulong4() const { return {a[0], a[1], a[2], a[3]}; }
+	operator fx128::long4() const
+	{
+		return {static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]), static_cast<int64_t>(a[2]), static_cast<int64_t>(a[3])};
+	}
+};
 
-inline __m256i from_lanes(const lanes_i64& a) { return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(a.data())); }
-inline __m256d from_lanes(const lanes_f64& a) { return _mm256_loadu_pd(a.data()); }
+inline int_lanes from_lanes(const lanes_i64& a) { return {a}; }
+inline fx128::double4 from_lanes(const lanes_f64& a) { return {a[0], a[1], a[2], a[3]}; }
 
 // Random double whose scaled magnitude |v| * 2^kFracBits lies in [2^min_log2, 2^max_log2).
 inline double random_scaled_double(std::mt19937_64& rng, int min_log2, int max_log2, bool allow_negative)
