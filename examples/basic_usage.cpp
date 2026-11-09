@@ -20,14 +20,12 @@ int main()
 	// small and needs full precision. A double cannot hold such positions to the millimeter (its spacing near 1e22
 	// is ~2 million meters), so they are built in fixed point: a far base plus small offsets.
 	const fixed128x4 base{9.46e21};
-	const fixed128x4 p = base + fixed128x4{_mm256_setr_pd(1.0, 2.5, -3.0, 0.125)};
-	const fixed128x4 q = base + fixed128x4{_mm256_setr_pd(0.5, 4.5, -3.0, -0.125)};
+	const fixed128x4 p = base + fixed128x4{double4{1.0, 2.5, -3.0, 0.125}};
+	const fixed128x4 q = base + fixed128x4{double4{0.5, 4.5, -3.0, -0.125}};
 	const double4 delta = static_cast<double4>(p - q); // subtract in fixed point, then convert
 
-	alignas(32) double d[4];
-	_mm256_store_pd(d, delta);
 	// Expected: { 0.5, -2, 0, 0.25 }
-	std::printf("fixed128x4 p - q = { %g, %g, %g, %g }\n", d[0], d[1], d[2], d[3]);
+	std::printf("fixed128x4 p - q = { %g, %g, %g, %g }\n", delta.x, delta.y, delta.z, delta.w);
 
 	// Lane access returns a scalar fixed128.
 	std::printf("fixed128x4 (p - q)[0] = %g\n", static_cast<double>((p - q)[0]));

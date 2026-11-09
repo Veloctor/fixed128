@@ -19,6 +19,13 @@ jobs:
           - name: ubuntu-clang
             os: ubuntu-latest
             cxx: clang++
+          # ARM64: no AVX2, so the scalar backend is selected automatically.
+          - name: macos-arm-clang
+            os: macos-latest
+            cxx: clang++
+          - name: ubuntu-arm-gcc
+            os: ubuntu-24.04-arm
+            cxx: g++
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
@@ -31,6 +38,10 @@ jobs:
       - name: Install Ninja
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
 
       - name: Configure
         run: cmake --preset release -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}

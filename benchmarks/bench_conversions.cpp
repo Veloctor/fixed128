@@ -45,10 +45,12 @@ namespace
 		std::vector<T> v(kVectors);
 		for (auto& x : v) {
 			if constexpr (std::is_same_v<T, double4>)
-				x = _mm256_setr_pd(random_double(rng, min_log2, max_log2, allow_negative), random_double(rng, min_log2, max_log2, allow_negative),
-					random_double(rng, min_log2, max_log2, allow_negative), random_double(rng, min_log2, max_log2, allow_negative));
+				x = double4{random_double(rng, min_log2, max_log2, allow_negative), random_double(rng, min_log2, max_log2, allow_negative),
+					random_double(rng, min_log2, max_log2, allow_negative), random_double(rng, min_log2, max_log2, allow_negative)};
+			else if constexpr (std::is_same_v<T, long4>)
+				x = long4{static_cast<int64_t>(rng()), static_cast<int64_t>(rng()), static_cast<int64_t>(rng()), static_cast<int64_t>(rng())};
 			else
-				x = _mm256_setr_epi64x(static_cast<int64_t>(rng()), static_cast<int64_t>(rng()), static_cast<int64_t>(rng()), static_cast<int64_t>(rng()));
+				x = ulong4{rng(), rng(), rng(), rng()};
 		}
 		return v;
 	}
@@ -74,35 +76,34 @@ int main(int argc, char** argv)
 	const auto d_uint64 = random_vectors<double4>(rng, 0 + FIXED128_FRAC_BITS, 64 + FIXED128_FRAC_BITS, false);
 	const auto d_fixed128 = random_vectors<double4>(rng, -8, 127, true);
 	const auto d_ufixed128 = random_vectors<double4>(rng, -8, 128, false);
-	const auto i_bits = random_vectors<__m256i>(rng, 0, 0, false);
-	const auto i_bits2 = random_vectors<__m256i>(rng, 0, 0, false);
+	const auto i_bits = random_vectors<ulong4>(rng, 0, 0, false);
+	const auto i_bits2 = random_vectors<ulong4>(rng, 0, 0, false);
+	const auto s_bits = random_vectors<long4>(rng, 0, 0, false);
 
 	std::vector<double4> out_d(kVectors);
-	std::vector<__m256i> out_hi(kVectors), out_lo(kVectors);
+	std::vector<ulong4> out_hi(kVectors), out_lo(kVectors);
+	std::vector<long4> out_s(kVectors);
 
 	ankerl::nanobench::Bench throughput;
-	throughput.title("throughput (per value, independent inputs)").unit("value").batch(kValues).warmup(100).minEpochIterations(200);
+	throughput.title(FIXED128_BACKEND_AVX2 ? "throughput (per value, independent inputs), AVX2 backend" : "throughput (per value, independent inputs), scalar backend").unit("value").batch(kValues).warmup(100).minEpochIterations(200);
 
 	r.run(throughput, "double -> int64 (scalar cvttsd2si, baseline)", [&] {
 		for (size_t i = 0; i < kVectors; ++i) {
-			alignas(32) double in[4];
-			alignas(32) int64_t out[4];
-			_mm256_store_pd(in, d_int64[i]);
-			for (int l = 0; l < 4; ++l) out[l] = static_cast<int64_t>(in[l]);
-			out_lo[i] = _mm256_load_si256(reinterpret_cast<const __m256i*>(out));
+			const double4& in = d_int64[i];
+			out_s[i] = long4{static_cast<int64_t>(in.x), static_cast<int64_t>(in.y), static_cast<int64_t>(in.z), static_cast<int64_t>(in.w)};
 		}
-		doNotOptimizeAway(out_lo.data());
+		doNotOptimizeAway(out_s.data());
 	});
 	r.run(throughput, "double -> int64 (double_to_int64_fast)", [&] {
-		for (size_t i = 0; i < kVectors; ++i) out_lo[i] = double_to_int64_fast(d_int64[i]);
-		doNotOptimizeAway(out_lo.data());
+		for (size_t i = 0; i < kVectors; ++i) out_s[i] = double_to_int64_fast(d_int64[i]);
+		doNotOptimizeAway(out_s.data());
 	});
 	r.run(throughput, "double -> uint64 (double_to_uint64_fast)", [&] {
 		for (size_t i = 0; i < kVectors; ++i) out_lo[i] = double_to_uint64_fast(d_uint64[i]);
 		doNotOptimizeAway(out_lo.data());
 	});
 	r.run(throughput, "int64 -> double (int64_to_double_fast_precise)", [&] {
-		for (size_t i = 0; i < kVectors; ++i) out_d[i] = int64_to_double_fast_precise(i_bits[i]);
+		for (size_t i = 0; i < kVectors; ++i) out_d[i] = int64_to_double_fast_precise(s_bits[i]);
 		doNotOptimizeAway(out_d.data());
 	});
 	r.run(throughput, "uint64 -> double (uint64_to_double_fast_precise)", [&] {
@@ -111,9 +112,8 @@ int main(int argc, char** argv)
 	});
 	r.run(throughput, "double -> fixed128 (scalar fixed128, baseline)", [&] {
 		for (size_t i = 0; i < kVectors; ++i) {
-			alignas(32) double in[4];
-			_mm256_store_pd(in, d_fixed128[i]);
-			const fixed128x4 v{fixed128{in[3]}, fixed128{in[2]}, fixed128{in[1]}, fixed128{in[0]}};
+			const double4& in = d_fixed128[i];
+			const fixed128x4 v{fixed128{in.x}, fixed128{in.y}, fixed128{in.z}, fixed128{in.w}};
 			out_hi[i] = v.upper;
 			out_lo[i] = v.lower;
 		}
@@ -130,7 +130,7 @@ int main(int argc, char** argv)
 	r.run(throughput, "fixed128 -> double (scalar fixed128, baseline)", [&] {
 		for (size_t i = 0; i < kVectors; ++i) {
 			const fixed128x4 v{i_bits[i], i_bits2[i]};
-			out_d[i] = _mm256_setr_pd(static_cast<double>(v[0]), static_cast<double>(v[1]), static_cast<double>(v[2]), static_cast<double>(v[3]));
+			out_d[i] = double4{static_cast<double>(v[0]), static_cast<double>(v[1]), static_cast<double>(v[2]), static_cast<double>(v[3])};
 		}
 		doNotOptimizeAway(out_d.data());
 	});
@@ -151,11 +151,11 @@ int main(int argc, char** argv)
 	});
 
 	ankerl::nanobench::Bench latency;
-	latency.title("latency (dependency chain)").unit("round trip").warmup(1000).minEpochIterations(20000);
+	latency.title(FIXED128_BACKEND_AVX2 ? "latency (dependency chain), AVX2 backend" : "latency (dependency chain), scalar backend").unit("round trip").warmup(1000).minEpochIterations(20000);
 
 	double4 chain = d_fixed128[0];
 	r.run(latency, "double -> fixed128 -> double round trip", [&] {
-		long4 hi, lo;
+		ulong4 hi, lo;
 		double_to_fixed128_full(chain, hi, lo);
 		chain = fixed128_to_double(hi, lo);
 		doNotOptimizeAway(chain);

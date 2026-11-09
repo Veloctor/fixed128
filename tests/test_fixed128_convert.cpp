@@ -13,7 +13,7 @@ namespace
 		for (size_t i = 0; i < inputs.size(); i += 4) {
 			lanes_f64 in{};
 			for (size_t l = 0; l < 4 && i + l < inputs.size(); ++l) in[l] = inputs[i + l];
-			__m256i hi, lo;
+			ulong4 hi, lo;
 			convert(from_lanes(in), hi, lo);
 			const lanes_i64 h = to_lanes(hi), o = to_lanes(lo);
 			for (size_t l = 0; l < 4 && i + l < inputs.size(); ++l) {
