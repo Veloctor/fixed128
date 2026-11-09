@@ -1,278 +1,169 @@
-﻿#include "../include/int128.hpp"
-#include <benchmark/benchmark.h>
-#include <bitset>
+﻿// Conversion benchmarks (nanobench).
+//
+// Two kinds of measurement:
+//  * throughput: convert an L1-resident array of independent inputs; reported per converted value.
+//  * latency:    a dependency chain double -> fixed128 -> double, the shape of the typical use
+//                (relative position computed in fixed point, then math in floating point).
+//
+// Usage: fixed128_bench [substring]   runs only the benchmarks whose name contains the substring.
+// Always measure a Release build. Cycle-level numbers in the source comments were derived for Ice Lake;
+// use uiCA (https://uica.uops.info) to reproduce them statically.
+
+#define ANKERL_NANOBENCH_IMPLEMENT
+#include <nanobench.h>
+
+#include <fixed128/fixed128.hpp>
+
+#include <cstdint>
+#include <cstring>
 #include <random>
-#include <iostream>
+#include <string>
+#include <vector>
 
-using namespace benchmark;
-using namespace std;
+using namespace fx128;
+using ankerl::nanobench::doNotOptimizeAway;
 
-#define DoBenchmarkOrTest true
-
-#pragma region Helpers
-double Sqr(double d) { return d * d; }
-
-template <typename T>
-static T RandomBinary()
+namespace
 {
-	random_device rd;
-	mt19937 gen(rd());
-	uniform_int_distribution<uint32_t> dis(CHAR_MIN, CHAR_MAX);
-	T obj;
-	auto bytePtr = reinterpret_cast<char*>(&obj);
-	for (size_t i = 0; i < sizeof(T); ++i) {
-		bytePtr[i] = static_cast<char>(dis(gen));
-	}
-	return obj;
-}
+	constexpr size_t kVectors = 256; // 256 x 32 bytes = 8 KiB per input array, stays in L1
+	constexpr size_t kValues = kVectors * 4;
 
-static double RandomDouble(double min = 0, double max = 1)
-{
-	random_device rd;
-	mt19937 gen(rd());
-	uniform_real_distribution dis(min, max);
-	return dis(gen);
-}
-
-static float RandomSingle(float min = 0, float max = 1)
-{
-	random_device rd;
-	mt19937 gen(rd());
-	uniform_real_distribution dis(min, max);
-	return dis(gen);
-}
-#pragma endregion 
-
-#if (DoBenchmarkOrTest)
-static void cvt_fp32_int64(State& state)
-{
-	float a = RandomSingle(INT64_MIN, INT64_MAX);
-	for (auto _ : state)
+	// Random double whose magnitude in fixed-point units lies in [2^min_log2, 2^max_log2).
+	double random_double(std::mt19937_64& rng, int min_log2, int max_log2, bool allow_negative)
 	{
-		DoNotOptimize(a);
-		int64_t res = a;
-		DoNotOptimize(res);
+		std::uniform_int_distribution<int> exp_dist(min_log2, max_log2 - 1);
+		const uint64_t sign = allow_negative ? (rng() & 1) << 63 : 0;
+		const uint64_t bits = sign | (static_cast<uint64_t>(exp_dist(rng) - FIXED128_FRAC_BITS + 1023) << 52) | (rng() & 0xFFFFFFFFFFFFFull);
+		double d;
+		std::memcpy(&d, &bits, sizeof d);
+		return d;
 	}
-}
 
-static void cvt_int64_fp32(State& state)
-{
-	auto a = RandomBinary<int64_t>();
-	for (auto _ : state)
+	template <typename T>
+	std::vector<T> random_vectors(std::mt19937_64& rng, int min_log2, int max_log2, bool allow_negative)
 	{
-		DoNotOptimize(a);
-		float res = a;
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_fp32_uint64(State& state)
-{
-	float a = RandomSingle(0, UINT64_MAX);
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		uint64_t res = a;
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_uint64_fp32(State& state)
-{
-	auto a = RandomBinary<uint64_t>();
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		float res = a;
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_fp64_int64(State& state)
-{
-	double a = RandomDouble(INT64_MIN, INT64_MAX);
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		int64_t res = a;
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_int64_fp64(State& state)
-{
-	int64_t a = RandomBinary<int64_t>();
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		double res = static_cast<double>(a);
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_fp64_uint64(State& state)
-{
-	double a = RandomDouble(0, UINT64_MAX);
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		uint64_t res = a;
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_uint64_fp64(State& state)
-{
-	auto a = RandomBinary<uint64_t>();
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		double res = static_cast<double>(a);
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_uint128x4_fp64(State& state)
-{
-	auto a = RandomBinary<fixed128x4>();
-	long4 one = _mm256_set1_epi64x(1);
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		auto res = ufixed128_to_double(a.upper, a.lower);
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_fp64_uint128x4(State& state)
-{
-	double4 a = _mm256_set_pd(
-		RandomDouble(0, Sqr(UINT64_MAX)),
-		RandomDouble(0, Sqr(UINT64_MAX)),
-		RandomDouble(0, Sqr(UINT64_MAX)),
-		RandomDouble(0, Sqr(UINT64_MAX))
-		);
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		ulong4 upper, lower;
-		double_to_ufixed128_full(a, upper, lower);
-		DoNotOptimize(upper);
-		DoNotOptimize(lower);
-	}
-}
-
-static void cvt_int128x4_fp64(State& state)
-{
-	auto a = RandomBinary<fixed128x4>();
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		auto res = fixed128_to_double(a.upper, a.lower);
-		DoNotOptimize(res);
-	}
-}
-
-static void cvt_fp64_int128x4(State& state)
-{
-	double4 a = _mm256_set_pd(
-		RandomDouble(Sqr(INT64_MIN), Sqr(INT64_MAX)),
-		RandomDouble(Sqr(INT64_MIN), Sqr(INT64_MAX)),
-		RandomDouble(Sqr(INT64_MIN), Sqr(INT64_MAX)),
-		RandomDouble(Sqr(INT64_MIN), Sqr(INT64_MAX))
-		);
-	for (auto _ : state)
-	{
-		DoNotOptimize(a);
-		long4 upper, lower;
-		double_to_fixed128_full(a, upper, lower);
-		DoNotOptimize(upper);
-		DoNotOptimize(lower);
-	}
-}
-BENCHMARK(cvt_fp32_uint64);
-BENCHMARK(cvt_fp32_int64);
-BENCHMARK(cvt_uint64_fp32);
-BENCHMARK(cvt_int64_fp32);
-BENCHMARK(cvt_fp64_uint64);
-BENCHMARK(cvt_fp64_int64);
-BENCHMARK(cvt_uint64_fp64);
-BENCHMARK(cvt_int64_fp64);
-BENCHMARK(cvt_fp64_uint128x4);
-BENCHMARK(cvt_fp64_int128x4);
-BENCHMARK(cvt_uint128x4_fp64);
-BENCHMARK(cvt_int128x4_fp64);
-int main(int argc, char** argv) {
-	::benchmark::Initialize(&argc, argv);
-	if (::benchmark::ReportUnrecognizedArguments(argc, argv))
-		return 1;
-	::benchmark::RunSpecifiedBenchmarks();
-	system("pause");
-}
-#else
-int main()
-{
-	//////////////////////////////////////////////
-	/*uint64_t count = 0;
-	for (double e = 0; e < 127; e += 0.1)
-	{
-		double a = pow(2.0, e);
-		double b = 10000;
-		//a = a * pow(2.0, -fixed_frac_bits);
-		a = trunc(a);
-		fixed128x4 ia = fixed128x4{ a };
-		fixed128x4 ib = fixed128x4{ b };
-		fixed128x4 iresi = ia;
-		double dres = a + b;
-		iresi -= ib;
-		double4 ires = (double4)(iresi);
-		if ((dres - 0.001 > ires.m256d_f64[0]) || (dres + 0.001 < (ires.m256d_f64[0])))
-		{
-			cout << fixed << dres << endl;
-			cout << fixed << ires.m256d_f64[0] << endl;
-			cout << bitset<64>(iresi.upper.m256i_u64[0]) << endl;
-			cout << bitset<64>(iresi.lower.m256i_u64[0]) << endl << endl;
-			count++;
+		std::vector<T> v(kVectors);
+		for (auto& x : v) {
+			if constexpr (std::is_same_v<T, double4>)
+				x = _mm256_setr_pd(random_double(rng, min_log2, max_log2, allow_negative), random_double(rng, min_log2, max_log2, allow_negative),
+					random_double(rng, min_log2, max_log2, allow_negative), random_double(rng, min_log2, max_log2, allow_negative));
+			else
+				x = _mm256_setr_epi64x(static_cast<int64_t>(rng()), static_cast<int64_t>(rng()), static_cast<int64_t>(rng()), static_cast<int64_t>(rng()));
 		}
+		return v;
 	}
-	cout << count;*/
-	/////////////////////////////////////////////
-	double ad = 1000;
-	double bd = -0.001;
-	cout << "-----fixed128-----" << '\n';
-	auto as = fixed128{ad};
-	auto bs = fixed128{bd};
-	auto nas = fixed128{-ad};
-	auto nbs = fixed128{-bd};
-	cout << "a:	" << static_cast<double>(as) << '\n';
-	cout << "b:	" << static_cast<double>(bs) << '\n';
-	fixed128 adds = as;
-	for (int i = 0; i < 1000000; i++) {
-		adds += bs;
-	}
-	cout << "add:	" << static_cast<double>(adds) << '\n';
-	fixed128 subs = as;
-	for (int i = 0; i < 10000; i++) {
-		subs -= bs;
-	}
-	cout << "sub:	" << static_cast<double>(subs) << '\n';
-	cout << "a:	" << static_cast<double>(nas) << '\n';
-	cout << "b:	" << static_cast<double>(nbs) << '\n';
-	cout << "add:	" << static_cast<double>(nas + nbs) << '\n';
-	cout << "sub:	" << static_cast<double>(nas - nbs) << '\n';
 
-	auto a = fixed128x4{ad};
-	auto b = fixed128x4{bd};
-	auto na = fixed128x4{-ad};
-	auto nb = fixed128x4{-bd};
-	cout << "-----fixed128x4-----" << '\n';
-	cout << "a:	" << static_cast<double>(a[0]) << '\n';
-	cout << "b:	" << static_cast<double>(b[0]) << '\n';
-	cout << "add:	" << static_cast<double>((a + b)[0]) << '\n';
-	cout << "sub:	" << static_cast<double>((a - b)[0]) << '\n';
-	cout << "a:	" << static_cast<double>(na[0]) << '\n';
-	cout << "b:	" << static_cast<double>(nb[0]) << '\n';
-	cout << "add:	" << static_cast<double>((na + nb)[0]) << '\n';
-	cout << "sub:	" << static_cast<double>((na - nb)[0]) << '\n';
+	struct runner
+	{
+		std::string filter;
+
+		template <typename Op>
+		void run(ankerl::nanobench::Bench& bench, const char* name, Op&& op)
+		{
+			if (filter.empty() || std::string(name).find(filter) != std::string::npos) bench.run(name, op);
+		}
+	};
 }
-#endif
+
+int main(int argc, char** argv)
+{
+	runner r{argc > 1 ? argv[1] : ""};
+	std::mt19937_64 rng(2022);
+
+	const auto d_int64 = random_vectors<double4>(rng, 0 + FIXED128_FRAC_BITS, 63 + FIXED128_FRAC_BITS, true);
+	const auto d_uint64 = random_vectors<double4>(rng, 0 + FIXED128_FRAC_BITS, 64 + FIXED128_FRAC_BITS, false);
+	const auto d_fixed128 = random_vectors<double4>(rng, -8, 127, true);
+	const auto d_ufixed128 = random_vectors<double4>(rng, -8, 128, false);
+	const auto i_bits = random_vectors<__m256i>(rng, 0, 0, false);
+	const auto i_bits2 = random_vectors<__m256i>(rng, 0, 0, false);
+
+	std::vector<double4> out_d(kVectors);
+	std::vector<__m256i> out_hi(kVectors), out_lo(kVectors);
+
+	ankerl::nanobench::Bench throughput;
+	throughput.title("throughput (per value, independent inputs)").unit("value").batch(kValues).warmup(100).minEpochIterations(200);
+
+	r.run(throughput, "double -> int64 (scalar cvttsd2si, baseline)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) {
+			alignas(32) double in[4];
+			alignas(32) int64_t out[4];
+			_mm256_store_pd(in, d_int64[i]);
+			for (int l = 0; l < 4; ++l) out[l] = static_cast<int64_t>(in[l]);
+			out_lo[i] = _mm256_load_si256(reinterpret_cast<const __m256i*>(out));
+		}
+		doNotOptimizeAway(out_lo.data());
+	});
+	r.run(throughput, "double -> int64 (double_to_int64_fast)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) out_lo[i] = double_to_int64_fast(d_int64[i]);
+		doNotOptimizeAway(out_lo.data());
+	});
+	r.run(throughput, "double -> uint64 (double_to_uint64_fast)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) out_lo[i] = double_to_uint64_fast(d_uint64[i]);
+		doNotOptimizeAway(out_lo.data());
+	});
+	r.run(throughput, "int64 -> double (int64_to_double_fast_precise)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) out_d[i] = int64_to_double_fast_precise(i_bits[i]);
+		doNotOptimizeAway(out_d.data());
+	});
+	r.run(throughput, "uint64 -> double (uint64_to_double_fast_precise)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) out_d[i] = uint64_to_double_fast_precise(i_bits[i]);
+		doNotOptimizeAway(out_d.data());
+	});
+	r.run(throughput, "double -> fixed128 (scalar fixed128, baseline)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) {
+			alignas(32) double in[4];
+			_mm256_store_pd(in, d_fixed128[i]);
+			const fixed128x4 v{fixed128{in[3]}, fixed128{in[2]}, fixed128{in[1]}, fixed128{in[0]}};
+			out_hi[i] = v.upper;
+			out_lo[i] = v.lower;
+		}
+		doNotOptimizeAway(out_lo.data());
+	});
+	r.run(throughput, "double -> fixed128 (double_to_fixed128_full)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) double_to_fixed128_full(d_fixed128[i], out_hi[i], out_lo[i]);
+		doNotOptimizeAway(out_lo.data());
+	});
+	r.run(throughput, "double -> ufixed128 (double_to_ufixed128_full)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) double_to_ufixed128_full(d_ufixed128[i], out_hi[i], out_lo[i]);
+		doNotOptimizeAway(out_lo.data());
+	});
+	r.run(throughput, "fixed128 -> double (scalar fixed128, baseline)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) {
+			const fixed128x4 v{i_bits[i], i_bits2[i]};
+			out_d[i] = _mm256_setr_pd(static_cast<double>(v[0]), static_cast<double>(v[1]), static_cast<double>(v[2]), static_cast<double>(v[3]));
+		}
+		doNotOptimizeAway(out_d.data());
+	});
+	r.run(throughput, "fixed128 -> double (fixed128_to_double)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) out_d[i] = fixed128_to_double(i_bits[i], i_bits2[i]);
+		doNotOptimizeAway(out_d.data());
+	});
+	r.run(throughput, "ufixed128 -> double (ufixed128_to_double)", [&] {
+		for (size_t i = 0; i < kVectors; ++i) out_d[i] = ufixed128_to_double(i_bits[i], i_bits2[i]);
+		doNotOptimizeAway(out_d.data());
+	});
+	r.run(throughput, "fixed128x4 a - b -> double (relative position)", [&] {
+		for (size_t i = 0; i + 1 < kVectors; ++i) {
+			const fixed128x4 a{i_bits[i], i_bits2[i]}, b{i_bits[i + 1], i_bits2[i + 1]};
+			out_d[i] = static_cast<double4>(a - b);
+		}
+		doNotOptimizeAway(out_d.data());
+	});
+
+	ankerl::nanobench::Bench latency;
+	latency.title("latency (dependency chain)").unit("round trip").warmup(1000).minEpochIterations(20000);
+
+	double4 chain = d_fixed128[0];
+	r.run(latency, "double -> fixed128 -> double round trip", [&] {
+		long4 hi, lo;
+		double_to_fixed128_full(chain, hi, lo);
+		chain = fixed128_to_double(hi, lo);
+		doNotOptimizeAway(chain);
+	});
+	chain = d_int64[0];
+	r.run(latency, "double -> int64 -> double round trip", [&] {
+		chain = int64_to_double_fast_precise(double_to_int64_fast(chain));
+		doNotOptimizeAway(chain);
+	});
+	return 0;
+}
