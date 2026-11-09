@@ -34,3 +34,9 @@
 packages
 x64
 /.idea
+
+# CMake build trees and local presets
+/build*/
+/out/
+CMakeUserPresets.json
+.cache/
