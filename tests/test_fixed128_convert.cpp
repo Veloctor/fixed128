@@ -62,6 +62,19 @@ namespace
 		return v;
 	}
 
+	// The neighbors one ULP below and above half-way points: the inputs most sensitive to rounding mistakes.
+	std::vector<double> around_halfway_doubles(int count, bool is_signed)
+	{
+		std::mt19937_64 rng(kSeed + 3);
+		std::vector<double> v;
+		for (int i = 0; i < count; i += 2) {
+			const uint64_t bits = ref::bits_of(random_halfway_double(rng, is_signed));
+			v.push_back(ref::double_of(bits - 1));
+			v.push_back(ref::double_of(bits + 1));
+		}
+		return v;
+	}
+
 	// Random 128-bit patterns with a random number of leading zero/sign bits, to cover all magnitudes.
 	std::vector<ref::u128> random_fixed128(int count, bool is_signed)
 	{
@@ -90,54 +103,61 @@ namespace
 	}
 }
 
-// KNOWN ISSUE (not fixed yet, the library keeps its original numeric behavior):
-// with FIXED128_ROUND_HALF_AWAY_FROM_ZERO, double_to_(u)fixed128_full adds 0.5 to the *unscaled* double, i.e. half of
-// a whole unit instead of half of 2^-FIXED128_FRAC_BITS; and the floating-point addition v + 0.5 itself rounds, which
-// breaks inputs just below 0.5 and inputs >= 2^52. Truncation mode is exact.
-// may_fail keeps these cases running and reporting without failing the suite; remove it once the rounding is fixed.
-#define KNOWN_ROUNDING_ISSUE doctest::may_fail(FIXED128_ROUND_HALF_AWAY_FROM_ZERO != 0)
-
 TEST_SUITE("double -> fixed128")
 {
-	TEST_CASE("signed: edge values" * KNOWN_ROUNDING_ISSUE)
+	TEST_CASE("signed: edge values")
 	{
 		mismatch_log log;
 		check_double_to_fixed128(edge_scaled_values(true), true, double_to_fixed128_full, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("signed: random values over the full range" * KNOWN_ROUNDING_ISSUE)
+	TEST_CASE("signed: random values over the full range")
 	{
 		mismatch_log log;
 		check_double_to_fixed128(random_doubles(kRandomCount, 127, true), true, double_to_fixed128_full, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("signed: values exactly half-way between two fixed-point values" * KNOWN_ROUNDING_ISSUE)
+	TEST_CASE("signed: values exactly half-way between two fixed-point values")
 	{
 		mismatch_log log;
 		check_double_to_fixed128(halfway_doubles(kRandomCount, true), true, double_to_fixed128_full, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: edge values" * KNOWN_ROUNDING_ISSUE)
+	TEST_CASE("signed: values one ULP around half-way points")
+	{
+		mismatch_log log;
+		check_double_to_fixed128(around_halfway_doubles(kRandomCount, true), true, double_to_fixed128_full, log);
+		CHECK_NO_MISMATCH(log);
+	}
+
+	TEST_CASE("unsigned: edge values")
 	{
 		mismatch_log log;
 		check_double_to_fixed128(edge_scaled_values(false), false, double_to_ufixed128_full, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: random values over the full range" * KNOWN_ROUNDING_ISSUE)
+	TEST_CASE("unsigned: random values over the full range")
 	{
 		mismatch_log log;
 		check_double_to_fixed128(random_doubles(kRandomCount, 128, false), false, double_to_ufixed128_full, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: values exactly half-way between two fixed-point values" * KNOWN_ROUNDING_ISSUE)
+	TEST_CASE("unsigned: values exactly half-way between two fixed-point values")
 	{
 		mismatch_log log;
 		check_double_to_fixed128(halfway_doubles(kRandomCount, false), false, double_to_ufixed128_full, log);
+		CHECK_NO_MISMATCH(log);
+	}
+
+	TEST_CASE("unsigned: values one ULP around half-way points")
+	{
+		mismatch_log log;
+		check_double_to_fixed128(around_halfway_doubles(kRandomCount, false), false, double_to_ufixed128_full, log);
 		CHECK_NO_MISMATCH(log);
 	}
 }

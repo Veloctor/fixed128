@@ -26,8 +26,7 @@ int main()
 
 	alignas(32) double d[4];
 	_mm256_store_pd(d, delta);
-	// Exact answer: { 0.5, -2, 0, 0.25 }. While the rounding known issue (see README) is open, lanes whose offsets
-	// are not multiples of 1.0 come out wrong in the default rounding mode.
+	// Expected: { 0.5, -2, 0, 0.25 }
 	std::printf("fixed128x4 p - q = { %g, %g, %g, %g }\n", d[0], d[1], d[2], d[3]);
 
 	// Lane access returns a scalar fixed128.

@@ -2,7 +2,6 @@
 #include "config.hpp"
 #include "types.hpp"
 
-#include <climits>
 #include <cstdint>
 
 // AVX2 conversions between packed doubles and packed int64 / fixed128, 4 lanes at a time.
@@ -171,20 +170,23 @@ namespace fx128
 		return result;
 	}
 
+	// Rounding (FIXED128_ROUND_HALF_AWAY_FROM_ZERO, see config.hpp) is exact and done on the integer mantissa:
+	// only the low half can be a right shift by n >= 1 bits, and then the magnitude is < 2^52, so
+	// round_half_up(mat / 2^n) == ((mat >> (n - 1)) + 1) >> 1 never carries into the high half.
+	// The right-shift path is selected for n >= 1 only (a shift by 0 takes the left-shift path), because
+	// mat >> (n - 1) needs n >= 1; srlv by a "negative" (huge unsigned) count gives 0, which also handles n - 1 >= 64.
+
 	//works for full unsigned fixed128 range, otherwise result undefined
-	//instruction total latency: 34(round half away)_30(trunc), total throughput CPI: 11.2(round half away)_10.8(trunc) (references IceLake)
+	//instruction total latency: 30(trunc), total throughput CPI: 10.8(trunc) (references IceLake); round half away: +2 instructions (add, srli) on the low path
 	inline void double_to_ufixed128_full(double4 v, ulong4& outIhigh, ulong4& outIlow)
-	{//rounding is selected by FIXED128_ROUND_HALF_AWAY_FROM_ZERO (see config.hpp)
+	{
 		//constants
 		const __m256i mat_mask = _mm256_set1_epi64x(0x0FFFFFFFFFFFFF);	//0_00000000000_1111111111111111111111111111111111111111111111111111
 		const __m256i hidden_1 = _mm256_set1_epi64x(0x10000000000000);	//0_00000000001_0000000000000000000000000000000000000000000000000000//you can reduce this constant by add 1 to mat_mask, inc more 1/3 clock throughput
 		const __m256i exp_lbias = _mm256_set1_epi64x(1023LL + 52 - FIXED128_FRAC_BITS);
 		const __m256i exp_hbias = _mm256_set1_epi64x(1023LL + 52 + 64 - FIXED128_FRAC_BITS);
 		const __m256i zero256 = _mm256_setzero_si256();
-#if FIXED128_ROUND_HALF_AWAY_FROM_ZERO
 		//majik operations											  //Latency, Throughput
-		v = _mm256_add_pd(v, _mm256_set1_pd(0.5));							//4,1/2
-#endif
 		__m256i bin = _mm256_castpd_si256(v);
 		__m256i exp_enc = _mm256_srli_epi64(bin, 52);						//1,1/2
 		__m256i mat = _mm256_and_si256(bin, mat_mask);						//1,1/3
@@ -197,14 +199,25 @@ namespace fx128
 		outIhigh = _mm256_blendv_epi8(hmsr, hmsl, hexp_is_pos);				//2,1
 		__m256i exp_lfrac = _mm256_sub_epi64(exp_enc, exp_lbias);			//1,1/3
 		__m256i lmsl = _mm256_sllv_epi64(mat, exp_lfrac);					//1,1/2
+#if FIXED128_ROUND_HALF_AWAY_FROM_ZERO
+		const __m256i exp_lbias_m1 = _mm256_set1_epi64x(1023LL + 52 - FIXED128_FRAC_BITS - 1);
+		const __m256i one256 = _mm256_set1_epi64x(1);
+		const __m256i minus_one256 = _mm256_set1_epi64x(-1);
+		__m256i exp_lfrac_n1 = _mm256_sub_epi64(exp_lbias_m1, exp_enc);		//1,1/3		n - 1
+		__m256i lmsr = _mm256_srlv_epi64(mat, exp_lfrac_n1);				//1,1/2		keeps the rounding bit
+		lmsr = _mm256_add_epi64(lmsr, one256);								//1,1/3
+		lmsr = _mm256_srli_epi64(lmsr, 1);									//1,1/2
+		__m256i lexp_is_pos = _mm256_cmpgt_epi64(exp_lfrac, minus_one256);	//3,1		left shift, or shift by 0
+#else
 		__m256i exp_lfrac_n = _mm256_sub_epi64(zero256, exp_lfrac);			//1,1/3
 		__m256i lmsr = _mm256_srlv_epi64(mat, exp_lfrac_n);					//1,1/2
 		__m256i lexp_is_pos = _mm256_cmpgt_epi64(exp_lfrac, zero256);		//3,1
+#endif
 		outIlow = _mm256_blendv_epi8(lmsr, lmsl, lexp_is_pos);					//2,1
 	}
 
 	//works for full fixed128 range, otherwise result undefined
-	//instruction total latency: 40(round half away)_36(trunc), total throughput CPI: 12.6(round half away)_12.2(trunc) (references IceLake)
+	//instruction total latency: 36(trunc), total throughput CPI: 12.2(trunc) (references IceLake); round half away: +2 instructions (add, srli) on the low path
 	inline void double_to_fixed128_full(const double4 v, long4& outIHigh, ulong4& outIlow)
 	{
 		//constants
@@ -214,24 +227,29 @@ namespace fx128
 		const __m256i exp_hbias = _mm256_set1_epi64x(1023LL + 52 + 64 - FIXED128_FRAC_BITS);
 		const __m256i zero256 = _mm256_setzero_si256();
 		//majik operations											  //Latency, Throughput
-#if FIXED128_ROUND_HALF_AWAY_FROM_ZERO
-		double4 abs = _mm256_and_pd(v, _mm256_castsi256_pd(_mm256_set1_epi64x(LLONG_MAX)));							//1,1/3
-		abs = _mm256_add_pd(abs, _mm256_set1_pd(0.5));						//4,1/2
-		__m256i bin = _mm256_castpd_si256(abs);
-		__m256i exp_enc = _mm256_srli_epi64(bin, 52);						//1,1/2
-#else
 		__m256i bin = _mm256_castpd_si256(v);
 		__m256i exp_enc = _mm256_slli_epi64(bin, 1);						//1,1/2
 		exp_enc = _mm256_srli_epi64(exp_enc, 53);							//1,1/2
-#endif
 		double4 neg = _mm256_cmp_pd(v, _mm256_setzero_pd(), _CMP_LT_OS);	//4,1/2
 		__m256i mat = _mm256_and_si256(bin, mat_mask);						//1,1/3
 		mat = _mm256_or_si256(mat, hidden_1);								//1,1/3
 		__m256i exp_lfrac = _mm256_sub_epi64(exp_enc, exp_lbias);			//1,1/3
 		__m256i lmsl = _mm256_sllv_epi64(mat, exp_lfrac);					//1,1/2
+#if FIXED128_ROUND_HALF_AWAY_FROM_ZERO
+		// rounds the magnitude, see the comment above double_to_ufixed128_full
+		const __m256i exp_lbias_m1 = _mm256_set1_epi64x(1023LL + 52 - FIXED128_FRAC_BITS - 1);
+		const __m256i one256 = _mm256_set1_epi64x(1);
+		const __m256i minus_one256 = _mm256_set1_epi64x(-1);
+		__m256i exp_lfrac_n1 = _mm256_sub_epi64(exp_lbias_m1, exp_enc);		//1,1/3		n - 1
+		__m256i lmsr = _mm256_srlv_epi64(mat, exp_lfrac_n1);				//1,1/2		keeps the rounding bit
+		lmsr = _mm256_add_epi64(lmsr, one256);								//1,1/3
+		lmsr = _mm256_srli_epi64(lmsr, 1);									//1,1/2
+		__m256i lexp_is_pos = _mm256_cmpgt_epi64(exp_lfrac, minus_one256);	//3,1		left shift, or shift by 0
+#else
 		__m256i exp_lfrac_n = _mm256_sub_epi64(zero256, exp_lfrac);			//1,1/3
 		__m256i lmsr = _mm256_srlv_epi64(mat, exp_lfrac_n);					//1,1/2
 		__m256i lexp_is_pos = _mm256_cmpgt_epi64(exp_lfrac, zero256);		//3,1
+#endif
 		__m256i lresult_abs = _mm256_blendv_epi8(lmsr, lmsl, lexp_is_pos);	//2,1
 		__m256i negative = _mm256_castpd_si256(neg);
 		outIlow = _mm256_xor_si256(lresult_abs, negative);						//1,1/3

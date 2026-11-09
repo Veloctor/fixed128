@@ -91,7 +91,7 @@ Free functions in [`avx2_convert.hpp`](include/fixed128/avx2_convert.hpp):
 
 | Function | Valid input range | Accuracy |
 |---|---|---|
-| `double_to_fixed128_full`, `double_to_ufixed128_full` | full (u)fixed128 range | exact (see known issues) |
+| `double_to_fixed128_full`, `double_to_ufixed128_full` | full (u)fixed128 range | exact (rounded half away from zero, or truncated) |
 | `fixed128_to_double`, `ufixed128_to_double` | full (u)fixed128 range | ≤ 1 ULP |
 | `double_to_int64_fast`, `double_to_uint64_fast` | full (u)int64 range | exact, truncates |
 | `int64_to_double_fast_precise`, `uint64_to_double_fast_precise` | full (u)int64 range | correctly rounded |
@@ -101,7 +101,6 @@ Suffix meaning: `_limited` — documented restricted range only; `_fast` — ful
 
 ## Known issues
 
-- **Rounding mode of `double → fixed128` is wrong** (`FIXED128_ROUND_HALF_AWAY_FROM_ZERO=1`, the default): the conversion adds 0.5 to the *unscaled* value, i.e. half a whole unit instead of half of 2^-`FIXED128_FRAC_BITS`, and the floating-point addition `v + 0.5` itself rounds (inputs just below 0.5 and inputs ≥ 2^52 are affected even with `FIXED128_FRAC_BITS=0`). Truncation mode is exact. The tests mark these cases `may_fail`.
 - `fixed64_maxvalue` / `fixed64_minvalue` are initialized by converting an out-of-range `double` to `int64_t`, which is undefined behavior.
 
 ## Building the tests, benchmarks and examples

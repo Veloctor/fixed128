@@ -28,7 +28,7 @@ cmake --preset release; cmake --build --preset release; ctest --preset release
 ## 必须知道的约定与坑
 
 - **数值行为是契约。** 重构、整理、移植都不改变任何转换结果；改数值行为是单独的、经作者确认的任务。测试发现的现有缺陷标记为已知失败（doctest `may_fail`）并报告，而不是顺手修。
-- **已知缺陷**：`FIXED128_ROUND_HALF_AWAY_FROM_ZERO=1`（默认）时 `double_to_(u)fixed128_full` 把 0.5 加在未缩放的值上，且 `v + 0.5` 本身有浮点舍入；截断模式精确。详见 README “Known issues” 和 `tests/test_fixed128_convert.cpp` 的 `KNOWN_ROUNDING_ISSUE`。
+- **舍入在整数尾数上做**：`double_to_(u)fixed128_full` 的四舍五入是对尾数右移时保留一位舍入位再 `(x + 1) >> 1`，因此是精确的。不要改回在浮点域加 0.5（旧实现这样做，既加错了量级，浮点加法本身也会舍入）。已知缺陷列在 README “Known issues”。
 - 正确性只以 `tests/reference.hpp`（纯整数精确实现）为准；标量 `fixed128` 也是被测对象，不是基准答案（ADR 0003）。
 - 浮点运算顺序是正确性的一部分（如 `(v_hi - magic) + v_lo`）。保持原有顺序；`config.hpp` 会在 fast-math 下 `#error`。
 - 魔数常量是 `detail` 里由 `FIXED128_FRAC_BITS` 推出的 `constexpr double`，在函数内 `_mm256_set1_pd` 广播，没有全局动态初始化。
