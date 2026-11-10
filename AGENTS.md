@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 用户文档、接入方式、API 一览、已知问题：`README.md`
 - 项目术语（Fixed128、Frac bits、Lane、x4、Backend、`_limited`/`_fast`/`_full`、Reference implementation）：`CONTEXT.md`。命名和讨论都用这里的词。
-- 已做的架构决策及原因：`docs/adr/`。动到 backend 结构（ADR 0007，取代 0001）、第三方依赖、测试基准、SO 代码许可、frac bits 模板参数（ADR 0008，取代 0005）、C++17 这些方向前先读对应 ADR。
+- 已做的架构决策及原因：`docs/adr/`。动到 backend 结构（ADR 0007）、第三方依赖、测试基准、SO 代码许可、frac bits 模板参数（ADR 0008）、C++17 这些方向前先读对应 ADR。
 
 ## 构建与测试
 

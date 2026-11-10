@@ -111,7 +111,7 @@ The constructors taking 4 scalars take them in lane order: the **first argument 
 
 With the AVX2 backend, `fx128::avx2::to_m256d` / `to_m256i` / `to_double4` / `to_long4` / `to_ulong4` convert between these types and `__m256d` / `__m256i` for code that uses intrinsics directly (see [`examples/xyz_lane_packing.cpp`](examples/xyz_lane_packing.cpp)).
 
-Free functions in [`convert.hpp`](include/fixed128/convert.hpp) (a fixed128 lane is passed as its `upper` and `lower` halves):
+Free functions in [`convert.hpp`](include/fixed128/convert.hpp) and [`limited.hpp`](include/fixed128/limited.hpp) (the `_limited` ones trade range for speed: a few instructions, valid only inside the stated range) (a fixed128 lane is passed as its `upper` and `lower` halves):
 
 | Function | Valid input range | Accuracy |
 |---|---|---|
@@ -119,6 +119,10 @@ Free functions in [`convert.hpp`](include/fixed128/convert.hpp) (a fixed128 lane
 | `fixed128_to_double`, `ufixed128_to_double` | full (u)fixed128 range | ≤ 1 ULP; correctly rounded below 2^96 units (see below) |
 | `double_to_int64_fast`, `double_to_uint64_fast` | full (u)int64 range | exact, truncates |
 | `int64_to_double_fast_precise`, `uint64_to_double_fast_precise` | full (u)int64 range | correctly rounded |
+| `double_to_int64_limited` | [−2^51, 2^51], integral or not (rounds to nearest) | exact for integral inputs |
+| `double_to_uint64_limited` | [0, 2^52) | exact for integral inputs |
+| `int64_to_double_limited` | [−2^51, 2^51] | exact |
+| `uint64_to_double_limited` | [0, 2^52) | exact |
 
 The four (u)fixed128 functions are templates over the scale, e.g. `double_to_fixed128_full<20>(v, upper, lower)`; the scale must always be given.
 
@@ -165,7 +169,20 @@ new designs test-first.
 | `fixed128_fuzz` | libFuzzer differential fuzzing against the reference (Clang, `-DFIXED128_BUILD_FUZZERS=ON`) |
 | [`tools/uops`](tools/uops/README.md) | instruction latency / throughput lookup in the uops.info database |
 
-The plan and the reasoning behind all of this: [`docs/test-and-benchmark-plan.md`](docs/test-and-benchmark-plan.md).
+**Results of the first full verification (2026-11-10).**
+
+- The contract holds at all 8 scales, on both backends, in both rounding modes.
+- `fixed128 → double` is 100 % correctly rounded below 2^96 units; above, about 1.7 % of results are 1 ULP towards −∞ (known, not changed).
+- `double → fixed128`: rounding mode has mean error ≈ 0; truncation has mean error −0.44 units along the direction of the magnitude (biased).
+- Orbit drift (Jupiter system, Forest–Ruth 4, 10 years, median of 3 perturbations): position error double ≈ 1 km, Kahan ≈ 0.7 m, fixed128 ≈ 0.9 m.
+  Translated by 10²¹ m, double fails completely (10¹⁰ m), Kahan ≈ 1.1 m, fixed128 is bit-identical to the result at the origin.
+  Truncation and rounding give nearly the same result (0.86 m vs 0.87 m): the rounding mode of `double → fixed128` is irrelevant there, the error is dominated by the double velocity and gravity computation.
+  A 100-year leapfrog stress test (translated by 10²¹ m): fixed128 43 m, Kahan 66 m; the energy error grows with exponent ≈ 0.6 for fixed128 (unbiased random walk: 0.5).
+  Conclusion: no evidence yet that correct rounding of `fixed128 → double` is worth any cost.
+- Mutation testing: 15 deliberate bugs (magic number off by 1 ULP, lost borrow, missing rounding increment, wrong shift direction, off-by-one input checks, …) are all caught.
+- CI: all 9 jobs passed (MSVC Release and Debug with `/fp:strict`, GCC including `-march=x86-64-v3 -ffp-contract=fast`, Clang with ASan + UBSan, macOS ARM, Linux ARM, 60 s libFuzzer).
+
+The specification of every function: [`docs/contract.md`](docs/contract.md). The reasoning behind the tests and benchmarks: [`docs/test-strategy.md`](docs/test-strategy.md).
 
 ## Layout
 
@@ -184,7 +201,7 @@ CONTEXT.md               glossary of the project's terms
 
 ## Credits
 
-- Limited-range `double <-> int64` conversions (`detail/limited.hpp`): Mysticial's answer, and full-range `int64 -> double` conversions: wim's answer, both to
+- Limited-range `double <-> int64` conversions (`limited.hpp`): Mysticial's answer, and full-range `int64 -> double` conversions: wim's answer, both to
   [How to efficiently perform double/int64 conversions with SSE/AVX?](https://stackoverflow.com/questions/41144668/how-to-efficiently-perform-double-int64-conversions-with-sse-avx)
   on Stack Overflow. Stack Overflow contributions are licensed under [CC BY-SA](https://stackoverflow.com/help/licensing); see [ADR 0004](docs/adr/0004-stack-overflow-code-attribution.md).
 - Everything else: 矢速 (Velctor). Licensed under the [MIT License](LICENSE).

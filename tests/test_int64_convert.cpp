@@ -2,7 +2,7 @@
 #include "mismatch_log.hpp"
 #include "test_helpers.hpp"
 
-#include <fixed128/detail/limited.hpp>
+#include <fixed128/limited.hpp>
 
 using namespace fx128;
 
@@ -87,7 +87,7 @@ TEST_SUITE("double <-> int64")
 	{
 		mismatch_log log;
 		// double_to_uint64_limited: [0, 2^52), integral inputs
-		check_int64_to_double((1ull << 52) - 1, detail::uint64_to_double_limited,
+		check_int64_to_double((1ull << 52) - 1, uint64_to_double_limited,
 			[](uint64_t x) { return static_cast<double>(x); }, log);
 		std::mt19937_64 rng(kSeed);
 		for (int i = 0; i < kRandomCount; i += 4) {
@@ -102,9 +102,9 @@ TEST_SUITE("double <-> int64")
 				ud[l] = static_cast<double>(u[l]);
 				sd[l] = static_cast<double>(static_cast<int64_t>(s[l]));
 			}
-			const lanes_i64 u_back = to_lanes(detail::double_to_uint64_limited(from_lanes(ud)));
-			const lanes_i64 s_back = to_lanes(detail::double_to_int64_limited(from_lanes(sd)));
-			const lanes_f64 s_dbl = to_lanes(detail::int64_to_double_limited(from_lanes(s)));
+			const lanes_i64 u_back = to_lanes(double_to_uint64_limited(from_lanes(ud)));
+			const lanes_i64 s_back = to_lanes(double_to_int64_limited(from_lanes(sd)));
+			const lanes_f64 s_dbl = to_lanes(int64_to_double_limited(from_lanes(s)));
 			for (int l = 0; l < 4; ++l) {
 				if (u_back[l] != u[l]) log.add("double_to_uint64_limited(%a) = %llx", ud[l], (unsigned long long)u_back[l]);
 				if (s_back[l] != s[l]) log.add("double_to_int64_limited(%a) = %llx", sd[l], (unsigned long long)s_back[l]);

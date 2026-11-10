@@ -79,6 +79,21 @@ TEST_SUITE("input checks")
 		CHECK(problem_of(next_below(ref::pow2(64)), to_uint) == "");
 	}
 
+	TEST_CASE("double_to_int64_limited / double_to_uint64_limited")
+	{
+		auto to_int = [](const double4& v) { double_to_int64_limited(v); };
+		auto to_uint = [](const double4& v) { double_to_uint64_limited(v); };
+		CHECK(problem_of(kNaN, to_int) == "NaN");
+		CHECK(problem_of(ref::pow2(51) + 1.0, to_int) == "out of range");
+		CHECK(problem_of(ref::pow2(51), to_int) == "");
+		CHECK(problem_of(-ref::pow2(51), to_int) == "");
+		CHECK(problem_of(next_below(-ref::pow2(51)), to_int) == "out of range");
+		CHECK(problem_of(kInf, to_uint) == "infinite");
+		CHECK(problem_of(-1.0, to_uint) == "out of range");
+		CHECK(problem_of(ref::pow2(52), to_uint) == "out of range");
+		CHECK(problem_of(next_below(ref::pow2(52)), to_uint) == "");
+	}
+
 	TEST_CASE_TEMPLATE("scalar fixed128 / fixed64 constructors and fixed128 += double", F, FIXED128_TEST_FRAC_BITS_64)
 	{
 		auto make128 = [](const double4& v) { (void)fixed128<F::value>{v.z}; };

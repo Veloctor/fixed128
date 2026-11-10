@@ -8,5 +8,6 @@
 #include "check.hpp"
 #include "types.hpp"
 #include "convert.hpp"
+#include "limited.hpp"
 #include "scalar.hpp"
 #include "simd.hpp"

@@ -1,6 +1,6 @@
 # Fractional bits are a template parameter without default
 
-Supersedes [ADR 0005](0005-frac-bits-as-global-macro.md).
+Supersedes the original global-macro decision (ADR 0005, since removed): the scale was the macro `FIXED128_FRAC_BITS`, which forced one scale per program and made mismatched translation units an ODR violation.
 
 The number of fractional bits is the template parameter of `fixed64<FracBits>`, `fixed128<FracBits>`, `fixed64x4<FracBits>` and `fixed128x4<FracBits>`, of `fixed64_maxvalue` / `fixed64_minvalue`, and of the four (u)fixed128 conversion functions (`double_to_fixed128_full<FracBits>` etc.), on every backend. One program can use several scales, and values of different scales are distinct types that do not convert into each other, so mixing them is a compile error instead of a wrong value.
 

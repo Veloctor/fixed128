@@ -25,7 +25,7 @@
    };
    ```
 
-   `F` 是小数位数；fixed128 按"高 64 位 upper、低 64 位 lower"两半传递，有符号时是二进制补码。定义域见 `docs/test-and-benchmark-plan.md` 第一部分。
+   `F` 是小数位数；fixed128 按"高 64 位 upper、低 64 位 lower"两半传递，有符号时是二进制补码。定义域见 `docs/contract.md`。
 
 2. 在 `candidates.hpp` 里 `#include` 它，并加进 `all`。
 3. 构建并运行 `ctest --preset release`（契约测试）、`fixed128_accuracy_report`、`fixed128_bench`。

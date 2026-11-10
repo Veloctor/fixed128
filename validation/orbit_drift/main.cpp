@@ -1,5 +1,5 @@
 // Orbit drift experiment: does the representation of positions (double, double with Kahan summation, fixed128) let
-// rounding errors accumulate over long integrations? See docs/test-and-benchmark-plan.md, part five.
+// rounding errors accumulate over long integrations? See docs/test-strategy.md, part four.
 //
 // System: Sun, Jupiter and the Galilean moons at J2000 (initial states from himīśā's Ephemeris,
 // https://github.com/himisawww/Ephemeris, initials/SolarSystem/SolarSystem_Initial.txt; barycentric, ecliptic frame).
