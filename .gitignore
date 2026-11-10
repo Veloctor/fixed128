@@ -40,3 +40,6 @@ x64
 /out/
 CMakeUserPresets.json
 .cache/
+
+# uops.info database and its generated table (large, downloaded/regenerated locally)
+/tools/uops/data/
