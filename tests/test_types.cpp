@@ -50,6 +50,8 @@ TEST_SUITE("scalar types")
 				CHECK(static_cast<double>(f) == v);
 			}
 		CHECK(fixed64{1.0}.sbits == (int64_t{1} << kFracBits));
+		CHECK(fixed64_maxvalue.sbits == INT64_MAX);
+		CHECK(fixed64_minvalue.sbits == INT64_MIN);
 		CHECK(fixed64{1.0} < fixed64{2.0});
 		CHECK(fixed64{-1.0} != fixed64{1.0});
 	}

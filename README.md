@@ -96,12 +96,10 @@ Free functions in [`avx2_convert.hpp`](include/fixed128/avx2_convert.hpp):
 | `double_to_int64_fast`, `double_to_uint64_fast` | full (u)int64 range | exact, truncates |
 | `int64_to_double_fast_precise`, `uint64_to_double_fast_precise` | full (u)int64 range | correctly rounded |
 
-Outside the valid range results are undefined; inputs are not checked.
+`-0.0` converts to `0` (there is no negative zero in fixed point).
+NaN, ±Inf and inputs outside the valid range give undefined results: the conversions never pay a runtime cost to check them.
+(Planned: optional range checks enabled by default in Debug builds only.)
 Suffix meaning: `_limited` — documented restricted range only; `_fast` — full range of the target type; `_full` — full fixed128 range.
-
-## Known issues
-
-- `fixed64_maxvalue` / `fixed64_minvalue` are initialized by converting an out-of-range `double` to `int64_t`, which is undefined behavior.
 
 ## Building the tests, benchmarks and examples
 

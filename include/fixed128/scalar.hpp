@@ -65,8 +65,9 @@ namespace fx128
 		}
 	};
 
-	const fixed64 fixed64_maxvalue = fixed64(static_cast<double>(LLONG_MAX));
-	const fixed64 fixed64_minvalue = fixed64(static_cast<double>(LLONG_MIN));
+	// Largest / smallest representable fixed64, set bitwise (converting from double would overflow).
+	const fixed64 fixed64_maxvalue = [] { fixed64 f{0.0}; f.sbits = LLONG_MAX; return f; }();
+	const fixed64 fixed64_minvalue = [] { fixed64 f{0.0}; f.sbits = LLONG_MIN; return f; }();
 
 	struct fixed128
 	{
