@@ -58,3 +58,15 @@ _Avoid_: 把 `__m256d` 等寄存器类型当作公开类型
 **Reference implementation**:
 只存在于测试中的纯整数精确实现，是判定正确性的唯一依据。
 _Avoid_: 把标量 Fixed128 称为"参照实现"——它也是被测对象
+
+**Contract**:
+每个转换函数的规格：定义域、舍入方式、误差上限（见 `docs/test-and-benchmark-plan.md` 第一部分）。契约测试只检查契约，不检查"更好"的性质。
+_Avoid_: 规范、spec（指同一件事时）
+
+**Candidate**:
+注册在 `experimental/candidates` 中、按同一套契约测试和性能测试比较的一个转换实现；库自己的实现也是一个 candidate。
+_Avoid_: 方案、版本（指某个实现时）
+
+**Bias**:
+误差的系统性方向：大量结果的带符号误差均值偏离 0。长期积分中累积的是 bias，而不是单次误差的大小。
+_Avoid_: 精度不足（指方向性偏差时）

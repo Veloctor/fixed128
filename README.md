@@ -116,15 +116,24 @@ Free functions in [`convert.hpp`](include/fixed128/convert.hpp) (a fixed128 lane
 | Function | Valid input range | Accuracy |
 |---|---|---|
 | `double_to_fixed128_full`, `double_to_ufixed128_full` | full (u)fixed128 range | exact (rounded half away from zero, or truncated) |
-| `fixed128_to_double`, `ufixed128_to_double` | full (u)fixed128 range | ≤ 1 ULP |
+| `fixed128_to_double`, `ufixed128_to_double` | full (u)fixed128 range | ≤ 1 ULP; correctly rounded below 2^96 units (see below) |
 | `double_to_int64_fast`, `double_to_uint64_fast` | full (u)int64 range | exact, truncates |
 | `int64_to_double_fast_precise`, `uint64_to_double_fast_precise` | full (u)int64 range | correctly rounded |
 
 The four (u)fixed128 functions are templates over the scale, e.g. `double_to_fixed128_full<20>(v, upper, lower)`; the scale must always be given.
 
 `-0.0` converts to `0` (there is no negative zero in fixed point).
-NaN, ±Inf and inputs outside the valid range give undefined results: the conversions never pay a runtime cost to check them.
-(Planned: optional range checks enabled by default in Debug builds only.)
+
+**Accuracy of `fixed128 → double`** (measured by `fixed128_accuracy_report`, the same at every scale): for magnitudes below 2^96 units
+(at 36 fractional bits: about 120 light years in meters) every result is correctly rounded. Above, about 1.7 % of the results
+are 1 ULP below the correctly rounded value, always towards −∞, so the conversion is not exactly odd there
+(f(−x) ≠ −f(x) for those values). The typical use converts differences of nearby positions, which are far below 2^96 units.
+
+**Invalid inputs.** NaN, ±Inf and inputs outside the valid range give undefined results. The conversions from `double`
+can check them: `FIXED128_CHECK_INPUTS` (default: on when `NDEBUG` is not defined, i.e. in Debug builds; off in Release,
+where no checking code exists at all) reports each invalid lane to `fx128::input_error_handler`, which by default prints
+the problem and aborts; assign your own function to log, break into the debugger or throw instead.
+
 Suffix meaning: `_limited` — documented restricted range only; `_fast` — full range of the target type; `_full` — full fixed128 range.
 
 ## Building the tests, benchmarks and examples
@@ -136,22 +145,41 @@ ctest --preset release
 ```
 
 Third-party code (doctest, nanobench) is vendored in [`third_party/`](third_party/), so no network access is needed.
-The tests compare everything against an exact, pure-integer reference implementation ([`tests/reference.hpp`](tests/reference.hpp)) in one executable per rounding mode (on / off), each covering the scales 36 and 0, built for the scalar backend and, on x86-64, also for AVX2; a determinism test checks that both backends give bit-identical results.
 
-Benchmarks (always use a Release build): `build/release/benchmarks/fixed128_bench [name-substring]`.
-They report throughput over L1-resident arrays and the latency of a `double → fixed128 → double` dependency chain.
-The per-instruction latency/throughput comments in the source were derived for Ice Lake; [uiCA](https://uica.uops.info) reproduces them statically from the compiled loop.
+**Tests** compare everything against an exact, pure-integer reference implementation ([`tests/reference.hpp`](tests/reference.hpp)),
+which is itself tested against hand-computed answers and, on GCC/Clang, against `unsigned __int128`. They cover 8 scales
+(0, 1, 36, 52, 53, 64, 100, 127 fractional bits) with structured exhaustive grids (every exponent × mantissa patterns ×
+neighbors; every bit position × rounding cases), edge values, half-way points and random inputs; plus metamorphic properties
+(monotonicity, round trip, lane independence), the input checks, and a determinism test that both backends give
+bit-identical results. There is one executable per rounding mode and backend.
+[`experimental/candidates/`](experimental/candidates/README.md) is a registry of conversion implementations: every
+candidate there runs through the same contract tests, the accuracy report and the benchmarks, which makes it easy to try
+new designs test-first.
+
+| Tool | Purpose |
+|---|---|
+| `fixed128_accuracy_report` | ULP statistics and signed bias of every candidate's results |
+| `fixed128_bench` | throughput per working-set size, latency, realistic scenarios; JSON output; see [tools/bench](tools/bench/README.md) |
+| `fixed128_orbit_drift` | long integration of Jupiter's moons with double / Kahan / fixed128 positions against a double-double reference |
+| [`tools/mutation/Run-Mutations.ps1`](tools/mutation/Run-Mutations.ps1) | mutation testing: deliberate bugs that the tests must catch |
+| `fixed128_fuzz` | libFuzzer differential fuzzing against the reference (Clang, `-DFIXED128_BUILD_FUZZERS=ON`) |
+| [`tools/uops`](tools/uops/README.md) | instruction latency / throughput lookup in the uops.info database |
+
+The plan and the reasoning behind all of this: [`docs/test-and-benchmark-plan.md`](docs/test-and-benchmark-plan.md).
 
 ## Layout
 
 ```
-include/fixed128/   the library (fixed128.hpp includes everything)
-tests/              doctest tests and the reference implementation
-benchmarks/         nanobench benchmarks
-examples/           usage examples
-third_party/        vendored doctest and nanobench
-docs/adr/           architecture decision records
-CONTEXT.md          glossary of the project's terms
+include/fixed128/        the library (fixed128.hpp includes everything)
+tests/                   doctest tests, the reference implementation, accuracy report, fuzz target
+experimental/candidates/ registry of conversion implementations under test
+benchmarks/              nanobench benchmarks and the kernels for static analysis
+validation/              long-running experiments (orbit drift)
+examples/                usage examples
+tools/                   benchmark comparison, mutation testing, uops.info lookup
+third_party/             vendored doctest and nanobench
+docs/adr/                architecture decision records
+CONTEXT.md               glossary of the project's terms
 ```
 
 ## Credits

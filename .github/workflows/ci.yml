@@ -13,21 +13,48 @@ jobs:
           - name: windows-msvc
             os: windows-latest
             cxx: cl
+            preset: release
+          # Debug: the library's input checks are on by default; MSVC's strictest floating-point model.
+          - name: windows-msvc-debug-fp-strict
+            os: windows-latest
+            cxx: cl
+            preset: debug
+            cxxflags: /fp:strict
           - name: ubuntu-gcc
             os: ubuntu-latest
             cxx: g++
+            preset: release
+          # A newer ISA level (FMA available) with FMA contraction explicitly allowed: the conversions must not change.
+          - name: ubuntu-gcc-x86-64-v3-fp-contract
+            os: ubuntu-latest
+            cxx: g++
+            preset: release
+            cxxflags: -march=x86-64-v3 -ffp-contract=fast
           - name: ubuntu-clang
             os: ubuntu-latest
             cxx: clang++
+            preset: release
+          # Undefined behavior and memory errors, in a Debug build.
+          - name: ubuntu-clang-sanitizers
+            os: ubuntu-latest
+            cxx: clang++
+            preset: debug
+            cxxflags: -fsanitize=address,undefined -fno-sanitize-recover=all
+            ldflags: -fsanitize=address,undefined
           # ARM64: no AVX2, so the scalar backend is selected automatically.
           - name: macos-arm-clang
             os: macos-latest
             cxx: clang++
+            preset: release
           - name: ubuntu-arm-gcc
             os: ubuntu-24.04-arm
             cxx: g++
+            preset: release
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    env:
+      CXXFLAGS: ${{ matrix.cxxflags }}
+      LDFLAGS: ${{ matrix.ldflags }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,21 +71,24 @@ jobs:
         run: brew install ninja
 
       - name: Configure
-        run: cmake --preset release -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
 
-      - name: Build (library tests, benchmarks, examples)
-        run: cmake --build --preset release
+      - name: Build (library tests, benchmarks, examples, validation)
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Test
-        run: ctest --preset release
+        run: ctest --preset ${{ matrix.preset }}
 
-      - name: Run examples
+      - name: Run examples, accuracy report, benchmarks (smoke)
         shell: bash
         run: |
-          build/release/examples/fixed128_example_basic_usage
-          build/release/examples/fixed128_example_xyz_lane_packing
+          build/${{ matrix.preset }}/examples/fixed128_example_basic_usage
+          build/${{ matrix.preset }}/examples/fixed128_example_xyz_lane_packing
+          build/${{ matrix.preset }}/tests/fixed128_accuracy_report --count 100000 > /dev/null
+          build/${{ matrix.preset }}/benchmarks/fixed128_bench --sizes l1 --filter library > /dev/null
 
       - name: Install and consume with find_package
+        if: matrix.preset == 'release'
         shell: bash
         run: |
           cmake --install build/release --prefix "$PWD/install"
@@ -66,3 +96,18 @@ jobs:
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_PREFIX_PATH="$PWD/install"
           cmake --build build/consumer
           build/consumer/consumer
+
+  # Differential fuzzing of all candidates against the reference implementation (libFuzzer, one minute per push).
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Build
+        run: |
+          cmake -S . -B build/fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++ \
+            -DFIXED128_BUILD_FUZZERS=ON -DFIXED128_BUILD_BENCHMARKS=OFF -DFIXED128_BUILD_EXAMPLES=OFF -DFIXED128_BUILD_VALIDATION=OFF
+          cmake --build build/fuzz --target fixed128_fuzz
+      - name: Fuzz for 60 seconds
+        run: build/fuzz/tests/fixed128_fuzz -max_total_time=60 -max_len=128

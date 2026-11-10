@@ -58,3 +58,14 @@ add_executable(fixed128_accuracy_report accuracy_report.cpp)
 target_link_libraries(fixed128_accuracy_report PRIVATE fixed128::fixed128)
 target_include_directories(fixed128_accuracy_report PRIVATE ${PROJECT_SOURCE_DIR}/third_party ${PROJECT_SOURCE_DIR}/experimental)
 target_compile_definitions(fixed128_accuracy_report PRIVATE DOCTEST_CONFIG_DISABLE)
+
+# libFuzzer target (Clang only), differential against the reference implementation; see fuzz/fuzz_conversions.cpp.
+option(FIXED128_BUILD_FUZZERS "Build the libFuzzer target fixed128_fuzz (Clang only)" OFF)
+if(FIXED128_BUILD_FUZZERS)
+	add_executable(fixed128_fuzz fuzz/fuzz_conversions.cpp)
+	target_link_libraries(fixed128_fuzz PRIVATE fixed128::fixed128)
+	target_include_directories(fixed128_fuzz PRIVATE ${PROJECT_SOURCE_DIR}/experimental)
+	target_compile_definitions(fixed128_fuzz PRIVATE FIXED128_CHECK_INPUTS=0) # the target skips invalid inputs itself
+	target_compile_options(fixed128_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g)
+	target_link_options(fixed128_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()

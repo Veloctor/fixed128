@@ -34,7 +34,12 @@ constexpr ref::rounding kRounding = FIXED128_ROUND_HALF_AWAY_FROM_ZERO ? ref::ro
 
 // Fixed seed: failures are reproducible.
 constexpr uint64_t kSeed = 0x5EED'F1ED'0128'2022ull;
+// Random inputs per test; fewer in unoptimized (Debug, sanitizer) builds, where the structured grids still run in full.
+#ifdef NDEBUG
 constexpr int kRandomCount = 1 << 18;
+#else
+constexpr int kRandomCount = 1 << 14;
+#endif
 
 using lanes_i64 = std::array<uint64_t, 4>;
 using lanes_f64 = std::array<double, 4>;
