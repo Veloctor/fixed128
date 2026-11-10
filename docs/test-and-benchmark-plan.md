@@ -17,6 +17,8 @@
 - double → fixed128：四舍五入模式平均误差约 0；截断模式沿数值大小方向平均 −0.44 个单位（有偏）。
 - 轨道漂移（木星系，Forest–Ruth 4，10 年，3 次扰动取中位数）：位置误差 double 约 1 km，Kahan 约 0.7 m，fixed128 约 0.9 m；整体平移 10²¹ m 后 double 完全失效（10¹⁰ m 级），Kahan 约 1.1 m，fixed128 结果与原点处逐位相同。fixed128 截断与四舍五入结果几乎相同（0.86 m 对 0.87 m），证实"double → fixed128 的舍入方式影响可忽略，主导误差的是 double 速度与引力计算"。leapfrog 100 年压力测试（平移 10²¹ m）：fixed128 43 m，Kahan 66 m，能量误差增长指数 fixed128 约 0.6（接近无偏随机游走的 0.5）。
 - 由此对 D3 的结论：**目前没有证据需要为 fixed128 → double 的正确舍入付出开销**。
+- 变异测试：15 个故意引入的错误（魔数差 1 ULP、借位丢失、舍入增量缺失、移位方向选择错误、输入检查边界等）全部被测试发现。首轮有一个"存活"的是等价变异（改的是库随后丢弃的借位输出），已换成真正改变结果的变异。
+- CI 全部 9 个任务通过：MSVC（Release、Debug + `/fp:strict`）、GCC（含 `-march=x86-64-v3 -ffp-contract=fast`）、Clang（含 ASan + UBSan）、macOS ARM、Linux ARM、60 秒 libFuzzer 差分模糊测试。
 - 输入检查抓到了原有测试自身的一个越界输入（fixed64 在 frac bits 52 时用了 1e6）；性能测试修正了一个测试代码伪影（循环内逐 lane 构造输入导致存储转发失败）。
 
 ---
