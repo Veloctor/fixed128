@@ -10,6 +10,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # clang-cl (LLVM with the MSVC command line): the preferred Windows compiler, which the performance numbers use.
+          - name: windows-clang-cl
+            os: windows-latest
+            cxx: clang-cl
+            preset: release
           - name: windows-msvc
             os: windows-latest
             cxx: cl

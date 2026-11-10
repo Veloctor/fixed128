@@ -9,6 +9,7 @@
 //   an error that is always towards +infinity, say, gives a positive bias on both sides (towards zero for negatives).
 // double -> fixed128: the error result - exact value, in units of 2^-FracBits, over inputs that have a fractional part.
 //   Round half away from zero has mean error ~0; truncation has mean error ~-0.5 units in the direction of the magnitude.
+// subtract_to_double / subtract_to_float: like fixed128 -> double, for a - b (float ULPs for the float result).
 #include "reference.hpp"
 #include "test_helpers.hpp"
 
@@ -32,7 +33,8 @@ namespace
 	{
 		long long total = 0, cr = 0, plus1 = 0, minus1 = 0, more = 0;
 
-		void add(double got, double correctly_rounded)
+		template <typename T> // double or float
+		void add(T got, T correctly_rounded)
 		{
 			++total;
 			if (got == correctly_rounded) ++cr;
@@ -92,6 +94,48 @@ namespace
 				std::printf("| %s | %s | %d | %s | %s | %lld | %.3f%% | %.3f%% | %.3f%% | %.3f%% | %+.5f |\n", C::name,
 					is_signed ? "fixed128" : "ufixed128", F, kBucketNames[b], s ? "negative" : "positive", c.total, c.pct(c.cr),
 					c.pct(c.plus1), c.pct(c.minus1), c.pct(c.more), c.bias());
+			}
+		}
+	}
+
+	// subtract_to_double / subtract_to_float: a - b with b at random positions, bucketed by the magnitude of a - b.
+	template <class C, int F, bool to_float>
+	void report_subtract(long long count, uint64_t seed)
+	{
+		constexpr int max_log2 = candidates::subtract_max_log2<C>::value;
+		ulp_counts pos[kBuckets], neg[kBuckets];
+		std::mt19937_64 rng(seed);
+		for (long long i = 0; i < count; i += 4) {
+			ref::u128 d[4];
+			lanes_i64 ah, al, bh, bl;
+			for (int l = 0; l < 4; ++l) {
+				d[l] = ref::shr(ref::shr(random_u128(rng), 1), static_cast<int>(rng() % 128)); // non-negative, all magnitudes
+				if (max_log2 < 127 && !ref::is_zero(d[l]) && ref::msb(d[l]) >= max_log2) d[l] = ref::shr(d[l], 128 - max_log2);
+				if (rng() & 1) d[l] = ref::neg(d[l]);
+				const ref::u128 b = random_u128(rng), a = ref::add(b, d[l]);
+				ah[l] = a.hi, al[l] = a.lo, bh[l] = b.hi, bl[l] = b.lo;
+			}
+			const fixed128x4<F> a{from_lanes(ah), from_lanes(al)}, b{from_lanes(bh), from_lanes(bl)};
+			const auto got = [&] {
+				if constexpr (to_float) return to_lanes(C::template subtract_to_float<F>(a, b));
+				else return to_lanes(C::template subtract_to_double<F>(a, b));
+			}();
+			for (int l = 0; l < 4; ++l) {
+				const bool negative = d[l].hi >> 63;
+				ulp_counts& c = (negative ? neg : pos)[bucket_of(negative ? ref::neg(d[l]) : d[l])];
+				if constexpr (to_float)
+					c.add(got[l], ref::fixed128_to_float(d[l], F));
+				else
+					c.add(got[l], ref::fixed128_to_double(d[l], F, true));
+			}
+		}
+		for (int bucket = 0; bucket < kBuckets; ++bucket) {
+			for (int s = 0; s < 2; ++s) {
+				const ulp_counts& c = s ? neg[bucket] : pos[bucket];
+				if (!c.total) continue;
+				std::printf("| %s | %s | %d | %s | %s | %lld | %.3f%% | %.3f%% | %.3f%% | %.3f%% | %+.5f |\n", C::name,
+					to_float ? "subtract_to_float" : "subtract_to_double", F, kBucketNames[bucket], s ? "negative" : "positive", c.total,
+					c.pct(c.cr), c.pct(c.plus1), c.pct(c.minus1), c.pct(c.more), c.bias());
 			}
 		}
 	}
@@ -167,6 +211,19 @@ int main(int argc, char** argv)
 			constexpr int F = decltype(scale)::type::value;
 			if constexpr (candidates::has_fixed128_to_double<C>::value) report_fixed128_to_double<C, F>(true, count, seed);
 			if constexpr (candidates::has_ufixed128_to_double<C>::value) report_fixed128_to_double<C, F>(false, count, seed);
+		});
+	});
+
+	std::printf("\n## subtract_to_double / subtract_to_float, a - b compared with the correctly rounded result\n\n");
+	std::printf("Bucketed by the magnitude of a - b in units; float ULPs for subtract_to_float.\n\n");
+	std::printf("| candidate | operation | frac bits | magnitude | sign | samples | = CR | +1 ULP | -1 ULP | > 1 ULP | bias (ULP) |\n");
+	std::printf("|---|---|---|---|---|---|---|---|---|---|---|\n");
+	candidates::for_each_type<candidates::all>([&](auto candidate) {
+		using C = typename decltype(candidate)::type;
+		candidates::for_each_type<report_frac_bits>([&](auto scale) {
+			constexpr int F = decltype(scale)::type::value;
+			if constexpr (candidates::has_subtract_to_double<C>::value) report_subtract<C, F, false>(count, seed);
+			if constexpr (candidates::has_subtract_to_float<C>::value) report_subtract<C, F, true>(count, seed);
 		});
 	});
 

@@ -14,18 +14,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 构建与测试
 
-CMake + Ninja，`CMakePresets.json` 提供 `release` / `debug`。本机是 VS2026 (v145)，cmake/ninja/clang 在 VS 安装目录里，需要先进开发者环境：
+CMake + Ninja，`CMakePresets.json` 提供 `release` / `debug`（环境默认编译器）和 `clang-cl-release` / `clang-cl-debug`（仅 Windows）。**Windows 上默认用 clang-cl**：性能结论以 LLVM 的代码生成为准，MSVC 只保证正确（CI 两者都跑）。本机是 VS2026 (v145)，cmake/ninja/clang-cl 在 VS 安装目录里，需要先进开发者环境：
 
 ```powershell
 & 'D:\Microsoft Visual Studio\18\Professional\Common7\Tools\Launch-VsDevShell.ps1' -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
-cmake --preset release; cmake --build --preset release; ctest --preset release
+cmake --preset clang-cl-release; cmake --build --preset clang-cl-release; ctest --preset clang-cl-release
 ```
 
 - 测试按舍入方式 × backend 各编一个可执行文件（`fixed128_tests_round_avx2` / `fixed128_tests_trunc_scalar` 等；x86-64 上两个 backend 都编，标量版不开 AVX2），因为配置宏必须在一个程序的所有翻译单元里一致。frac bits 是模板参数，每个可执行文件都用 `TEST_CASE_TEMPLATE` 测 `tests/test_helpers.hpp` 里 `FIXED128_TEST_FRAC_BITS` 列出的各个值。`test_backend_determinism.cpp` 把所有结果哈希后与 AVX2 记录值比较，只有经作者确认的数值行为改动才能更新那些值。新增测试源文件要加进 `tests/CMakeLists.txt` 的 `FIXED128_TEST_SOURCES`。
 - 所有测试可执行文件都以 `FIXED128_CHECK_INPUTS=1` 编译，`tests/main.cpp` 把 `fx128::input_error_handler` 换成抛异常：测试输入必须在定义域内，否则测试会因异常失败（这曾抓到过测试自身的越界输入）。
-- **候选实现擂台**：`experimental/candidates/candidates.hpp` 的 `all` 里每个候选都自动跑契约测试（`test_contract.cpp`）、性质测试、精度报告和 benchmark；新转换算法先注册为候选再做（见该目录 README）。
+- **候选实现擂台**：`experimental/candidates/candidates.hpp` 的 `all` 里每个候选都自动跑契约测试（`test_contract.cpp`）、性质测试、精度报告和 benchmark；新转换算法先注册为候选再做（见该目录 README）。融合运算（`subtract_to_double`、`subtract_to_float`、`fixed128x4 ± double4`）现在是占位实现，契约和取舍规则见 `docs/contract.md` 的 D4（全范围、≤ 1 ULP、只允许无分支、`_limited` 变体和 `subtract_to_float` 只有明显更快才保留）。
 - 本机可用 VS 自带的 `clang++`（`-DCMAKE_CXX_COMPILER=clang++`）验证 GCC 风格的 `-Wall -Wextra -Werror`；GCC、sanitizer、fuzz、Debug、`/fp:strict`、`-march=x86-64-v3 -ffp-contract=fast` 由 CI（`.github/workflows/ci.yml`）覆盖。
-- 精度：`fixed128_accuracy_report`。性能：`fixed128_bench`（只看 Release，方法见 `tools/bench/README.md`，`--json` + `tools/bench/Compare-Bench.ps1` 对比）。长期积分：`fixed128_orbit_drift`。测试强度：`tools/mutation/Run-Mutations.ps1`（每个变异都必须被测试抓到）。指令延迟：`tools/uops/`。源码里的延迟/吞吐注释以 Ice Lake 为参照，用 uiCA 对 `fixed128_kernels` 的汇编静态复现。
+- 精度：`fixed128_accuracy_report`。性能：`fixed128_bench`（只看 Release，方法见 `tools/bench/README.md`，`--json` + `tools/bench/Compare-Bench.ps1` 对比）。长期积分：`fixed128_orbit_drift`（漂移，或 `--reverse` 往返；`--particle` 加混沌测试粒子；对照 double、Kahan、双双精度）。基准场景里的双双精度对照在 `benchmarks/dd4.hpp`。测试强度：`tools/mutation/Run-Mutations.ps1`（每个变异都必须被测试抓到）。指令延迟：`tools/uops/`。源码里的延迟/吞吐注释以 Ice Lake 为参照，用 uiCA 对 `fixed128_kernels` 的汇编静态复现。
 
 ## 必须知道的约定与坑
 

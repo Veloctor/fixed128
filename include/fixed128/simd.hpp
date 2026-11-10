@@ -193,5 +193,32 @@ namespace fx128
 		fixed128x4& operator+=(const fixed128x4& value) { return *this = *this + value; }
 		fixed128x4& operator-=(const ulong4& value) { return *this = *this - value; }
 		fixed128x4& operator-=(const fixed128x4& value) { return *this = *this - value; }
+
+		// Adds / subtracts doubles: the result is exactly *this + fixed128x4{value} (same rounding, same valid range
+		// of value as the conversion from double4), wrapping modulo 2^128. Typical use: position += velocity * dt.
+		// Placeholder implementation (conversion, then addition); fused implementations are tried as candidates first.
+		fixed128x4 operator+(const double4& value) const { return *this + fixed128x4{value}; }
+		fixed128x4 operator-(const double4& value) const { return *this - fixed128x4{value}; }
+		fixed128x4& operator+=(const double4& value) { return *this = *this + value; }
+		fixed128x4& operator-=(const double4& value) { return *this = *this - value; }
 	};
+
+	// a - b (wrapping modulo 2^128, like operator-) converted to double: within 1 ULP of the correctly rounded value,
+	// for every input. Typical use: positions relative to a camera or to another body.
+	// Placeholder implementation (subtraction, then conversion); fused implementations are tried as candidates first.
+	template<int FracBits>
+	double4 subtract_to_double(const fixed128x4<FracBits>& a, const fixed128x4<FracBits>& b)
+	{
+		return static_cast<double4>(a - b);
+	}
+
+	// a - b converted to float: within 1 float ULP of the correctly rounded value (float subnormals included).
+	// Typical use: camera-relative positions for rendering.
+	// Placeholder implementation (via subtract_to_double); kept only if a faster direct implementation is found.
+	template<int FracBits>
+	float4 subtract_to_float(const fixed128x4<FracBits>& a, const fixed128x4<FracBits>& b)
+	{
+		using namespace detail;
+		return to_float4(cvt_d_to_f(load(subtract_to_double(a, b))));
+	}
 }

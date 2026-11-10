@@ -16,4 +16,7 @@ fixed128_add_orbit_drift(fixed128_orbit_drift_trunc 0)
 if(FIXED128_BUILD_TESTS)
 	# Smoke test: a short integration far from the origin, where fixed128 must beat double positions.
 	add_test(NAME fixed128_orbit_drift_smoke COMMAND fixed128_orbit_drift --years 0.05 --offset 1e21 --check)
+	# Reversibility (forward and back, with the chaotic test particle; no offset, where double positions can move):
+	# fixed128 must return at least as close as double.
+	add_test(NAME fixed128_orbit_reverse_smoke COMMAND fixed128_orbit_drift --reverse --particle --years 0.05 --check)
 endif()

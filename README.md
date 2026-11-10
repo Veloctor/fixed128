@@ -14,7 +14,7 @@ Supported operations are deliberately few: addition, subtraction, conversion fro
 
 - x86-64 CPU with **AVX2** (Intel Haswell / AMD Excavator and newer) for the AVX2 backend: the whole program is compiled for AVX2, there is no runtime dispatch.
 - Any other 64-bit CPU (e.g. ARM / Apple Silicon) uses the portable scalar backend, which gives bit-identical results, only slower. See [Backends](#backends).
-- C++17; tested with MSVC, GCC and Clang.
+- C++17; tested with MSVC, clang-cl, GCC and Clang. Performance numbers are measured with Clang (clang-cl on Windows).
 - **No fast-math** (`-ffast-math`, `-Ofast`, `/fp:fast`): the conversions depend on exact IEEE 754 semantics and fail to compile with it.
 
 ## Quick start
@@ -24,9 +24,11 @@ Supported operations are deliberately few: addition, subtraction, conversion fro
 using namespace fx128;
 
 const fixed128x4<36> base{9.46e21};                          // 36 fractional bits; ~1 million light years, in meters
-const fixed128x4<36> p = base + fixed128x4<36>{double4{1.0, 2.0, 3.0, 4.0}};
-const fixed128x4<36> q = base + fixed128x4<36>{double4{0.5, 0.5, 0.5, 0.5}};
-const double4 delta = static_cast<double4>(p - q);           // exact subtraction, then convert
+fixed128x4<36> p = base + double4{1.0, 2.0, 3.0, 4.0};       // add a double displacement
+const fixed128x4<36> q = base + double4{0.5, 0.5, 0.5, 0.5};
+p += double4{1e-3, 0.0, 0.0, 0.0};                            // e.g. position += velocity * dt
+const double4 delta = subtract_to_double(p, q);               // exact subtraction, then convert
+const float4 for_gpu = subtract_to_float(p, q);               // e.g. camera-relative positions for rendering
 ```
 
 See [`examples/`](examples/) for complete programs.
@@ -104,19 +106,20 @@ Everything is in namespace `fx128`. The 4-lane value types are plain structs wit
 | `fixed64<FracBits>` | Scalar signed 64-bit fixed point. `fixed64_maxvalue<FracBits>` / `fixed64_minvalue<FracBits>` are its extremes. |
 | `fixed128<FracBits>` | Scalar signed 128-bit fixed point (`upper`, `lower`). `+ - += -=`, conversion from/to `double` (from `double`: truncates). |
 | `fixed64x4<FracBits>` | 4 lanes of `fixed64` (`bits`, a `long4`). |
-| `fixed128x4<FracBits>` | 4 lanes of `fixed128`, structure of arrays (`upper`, `lower`, both `ulong4`). `+ - += -=`, `operator[]`, conversion from/to `double4`. |
+| `fixed128x4<FracBits>` | 4 lanes of `fixed128`, structure of arrays (`upper`, `lower`, both `ulong4`). `+ - += -=` (with `fixed128x4` or `double4`), `operator[]`, conversion from/to `double4`. Adding a `double4` gives exactly the same result as adding `fixed128x4{value}`. |
 
 Each type has `static constexpr int frac_bits`.
 The constructors taking 4 scalars take them in lane order: the **first argument is lane 0** (`x`).
 
 With the AVX2 backend, `fx128::avx2::to_m256d` / `to_m256i` / `to_double4` / `to_long4` / `to_ulong4` convert between these types and `__m256d` / `__m256i` for code that uses intrinsics directly (see [`examples/xyz_lane_packing.cpp`](examples/xyz_lane_packing.cpp)).
 
-Free functions in [`convert.hpp`](include/fixed128/convert.hpp) and [`limited.hpp`](include/fixed128/limited.hpp) (the `_limited` ones trade range for speed: a few instructions, valid only inside the stated range) (a fixed128 lane is passed as its `upper` and `lower` halves):
+Free functions in [`convert.hpp`](include/fixed128/convert.hpp) and [`simd.hpp`](include/fixed128/simd.hpp) and [`limited.hpp`](include/fixed128/limited.hpp) (the `_limited` ones trade range for speed: a few instructions, valid only inside the stated range) (a fixed128 lane is passed as its `upper` and `lower` halves):
 
 | Function | Valid input range | Accuracy |
 |---|---|---|
 | `double_to_fixed128_full`, `double_to_ufixed128_full` | full (u)fixed128 range | exact (rounded half away from zero, or truncated) |
 | `fixed128_to_double`, `ufixed128_to_double` | full (u)fixed128 range | ≤ 1 ULP; correctly rounded below 2^96 units (see below) |
+| `subtract_to_double(a, b)`, `subtract_to_float(a, b)` (on two `fixed128x4`) | all inputs (a − b wraps like `operator-`) | ≤ 1 ULP (of double / of float) |
 | `double_to_int64_fast`, `double_to_uint64_fast` | full (u)int64 range | exact, truncates |
 | `int64_to_double_fast_precise`, `uint64_to_double_fast_precise` | full (u)int64 range | correctly rounded |
 | `double_to_int64_limited` | [−2^51, 2^51], integral or not (rounds to nearest) | exact for integral inputs |
@@ -148,6 +151,9 @@ cmake --build --preset release
 ctest --preset release
 ```
 
+On Windows, from a Visual Studio developer prompt, prefer the `clang-cl-release` / `clang-cl-debug` presets (clang-cl, which
+ships with Visual Studio); `release` / `debug` use the environment's default compiler (MSVC there).
+
 Third-party code (doctest, nanobench) is vendored in [`third_party/`](third_party/), so no network access is needed.
 
 **Tests** compare everything against an exact, pure-integer reference implementation ([`tests/reference.hpp`](tests/reference.hpp)),
@@ -163,8 +169,8 @@ new designs test-first.
 | Tool | Purpose |
 |---|---|
 | `fixed128_accuracy_report` | ULP statistics and signed bias of every candidate's results |
-| `fixed128_bench` | throughput per working-set size, latency, realistic scenarios; JSON output; see [tools/bench](tools/bench/README.md) |
-| `fixed128_orbit_drift` | long integration of Jupiter's moons with double / Kahan / fixed128 positions against a double-double reference |
+| `fixed128_bench` | throughput per working-set size, latency, realistic scenarios (camera-relative positions, pairwise gravity, integration step, each also with double-double and double positions); JSON output; see [tools/bench](tools/bench/README.md) |
+| `fixed128_orbit_drift` | long integration of Jupiter's moons with double / Kahan / double-double / fixed128 positions: drift against a double-double reference, or `--reverse` (forward and back, rounding only), optionally with a chaotic test particle |
 | [`tools/mutation/Run-Mutations.ps1`](tools/mutation/Run-Mutations.ps1) | mutation testing: deliberate bugs that the tests must catch |
 | `fixed128_fuzz` | libFuzzer differential fuzzing against the reference (Clang, `-DFIXED128_BUILD_FUZZERS=ON`) |
 | [`tools/uops`](tools/uops/README.md) | instruction latency / throughput lookup in the uops.info database |

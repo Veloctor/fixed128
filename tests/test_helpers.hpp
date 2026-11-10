@@ -50,6 +50,8 @@ inline lanes_i64 to_lanes(const fx128::long4& v)
 	return {static_cast<uint64_t>(v.x), static_cast<uint64_t>(v.y), static_cast<uint64_t>(v.z), static_cast<uint64_t>(v.w)};
 }
 inline lanes_f64 to_lanes(const fx128::double4& v) { return {v.x, v.y, v.z, v.w}; }
+using lanes_f32 = std::array<float, 4>;
+inline lanes_f32 to_lanes(const fx128::float4& v) { return {v.x, v.y, v.z, v.w}; }
 
 // Converts to whichever of long4 / ulong4 the function under test takes.
 struct int_lanes

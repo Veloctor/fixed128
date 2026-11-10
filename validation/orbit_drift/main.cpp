@@ -1,17 +1,28 @@
-// Orbit drift experiment: does the representation of positions (double, double with Kahan summation, fixed128) let
-// rounding errors accumulate over long integrations? See docs/test-strategy.md, part four.
+// Orbit drift experiment: does the representation of positions (double, double with Kahan summation, double-double,
+// fixed128) let rounding errors accumulate over long integrations? See docs/test-strategy.md, part four.
 //
 // System: Sun, Jupiter and the Galilean moons at J2000 (initial states from himīśā's Ephemeris,
 // https://github.com/himisawww/Ephemeris, initials/SolarSystem/SolarSystem_Initial.txt; barycentric, ecliptic frame).
+// Optionally a massless test particle on an eccentric orbit that crosses the orbits of all four moons, so it keeps
+// meeting them: its motion is chaotic and amplifies every rounding difference (made up, not a real object).
 // Every variant runs the same symplectic integrator with the same step; only the arithmetic of the positions differs.
-// The reference runs the same integrator in double-double, so "variant - reference" contains rounding errors only.
+//
+// Two modes:
+//  drift (default)  compare with a reference that runs the same integrator in double-double, so "variant - reference"
+//                   contains rounding errors only;
+//  --reverse        integrate forward, reverse the velocities, integrate back the same number of steps. The integrators
+//                   are time-symmetric, so in exact arithmetic every body returns exactly to its start: the distance to
+//                   the start is rounding error only, without needing a reference.
 //
 // Usage: fixed128_orbit_drift [--years Y] [--integrator fr4|leapfrog] [--steps-per-orbit N] [--offset METERS]
-//                             [--runs R] [--check]
+//                             [--runs R] [--particle] [--reverse] [--check]
 //   --steps-per-orbit  steps per orbit of Io (1.77 days); default 256 (fr4) or 2048 (leapfrog)
 //   --offset           add this to every coordinate (e.g. 1e21 m ~ 100 000 light years): the scale fixed128 is made for
 //   --runs             repeat with tiny perturbations of the initial state; one run is one sample of the rounding noise
-//   --check            exit with an error unless fixed128 positions are at least as accurate as double positions
+//   --particle         add the test particle
+//   --reverse          the reversibility test instead of the drift test (Y years forward, then Y years back)
+//   --check            exit with an error unless fixed128 positions are at least as accurate as double positions (drift: at
+//                      the end; reverse: at the turning point)
 #include "dd.hpp"
 
 #include <fixed128/fixed128.hpp>
@@ -38,7 +49,7 @@ namespace
 		double x[3], v[3]; // m, m / s
 	};
 
-	// J2000 TDB, from Ephemeris' SolarSystem_Initial.txt.
+	// J2000 TDB, from Ephemeris' SolarSystem_Initial.txt; the last entry is the optional test particle.
 	const body_data kBodies[] = {
 		{"Sun", 1.327124400412795E20, {-1.067706806453718E9, -4.182752704451427E8, 3.086181725430511E7}, {9.31257190034418E0, -1.282475571069859E1, -1.6335071235548E-1}},
 		{"Jupiter", 1.266865319003704E17, {5.974999179613324E11, 4.391864047925301E11, -1.519599989690655E10}, {-7.900547721929482E3, 1.114339277880856E4, 1.307023298008232E2}},
@@ -46,18 +57,25 @@ namespace
 		{"Europa", 3.202712099607295E12, {5.969386734596958E11, 4.388303917521267E11, -1.521395398275855E10}, {-4.382535707159293E2, -5.451080210684135E2, -8.65866684176086E1}},
 		{"Ganymede", 9.887832752719638E12, {5.966785728577158E11, 4.385010159694557E11, -1.523055768677486E10}, {-9.12910731272726E2, 2.805854032488588E3, -9.96438652533401E1}},
 		{"Callisto", 7.179283402579837E12, {5.978249976930955E11, 4.41038664810457E11, -1.513124512240641E10}, {-1.597352006983896E4, 1.262412164454912E4, 7.226661102912226E1}},
+		// 2.0e9 m from Jupiter (beyond Callisto's orbit), moving 4343 m/s faster than Jupiter, prograde: perijove about
+		// 3.5e8 m (inside Io's orbit), period about 8 days.
+		{"test particle", 0.0, {5.974999179613324E11 + 2.0E9, 4.391864047925301E11, -1.519599989690655E10}, {-7.900547721929482E3, 1.114339277880856E4 + 4343.0, 1.307023298008232E2}},
 	};
-	constexpr int kN = static_cast<int>(sizeof kBodies / sizeof kBodies[0]);
+	constexpr int kMaxN = static_cast<int>(sizeof kBodies / sizeof kBodies[0]);
+	constexpr int kMassive = kMaxN - 1; // without the test particle
 	constexpr int kJupiter = 1;
 	constexpr double kIoPeriod = 1.769137786 * 86400; // s
 	constexpr double kYear = 365.25 * 86400;
 
+	int g_n = kMassive; // bodies in this run: kMassive, or kMaxN with the test particle
+
 	using vec_dd = std::array<dd, 3>;
+	using vec_d = std::array<double, 3>;
 
 	// State of all bodies in double-double, positions without the offset: what every variant is compared in.
 	struct snapshot
 	{
-		std::array<vec_dd, kN> x, v;
+		std::array<vec_dd, kMaxN> x, v;
 	};
 
 	// ---- integrators: sequences of drift (x += v * c * dt) and kick (v += a(x) * c * dt) ----
@@ -82,29 +100,29 @@ namespace
 	// Reference: everything in double-double, positions without offset.
 	struct reference_variant
 	{
-		static constexpr const char* name = "reference (double-double)";
-		std::array<vec_dd, kN> x, v;
-		std::array<dd, kN> gm;
+		static constexpr const char* name = "reference (all double-double)";
+		std::array<vec_dd, kMaxN> x, v;
+		std::array<dd, kMaxN> gm;
 
-		void init(const body_data* b, const double (*dx)[3], double /*offset*/)
+		void init(const double (*dx)[3], double /*offset*/)
 		{
-			for (int i = 0; i < kN; ++i) {
-				gm[i] = b[i].gm;
-				for (int k = 0; k < 3; ++k) x[i][k] = dd(b[i].x[k]) + dd(dx[i][k]), v[i][k] = b[i].v[k];
+			for (int i = 0; i < g_n; ++i) {
+				gm[i] = kBodies[i].gm;
+				for (int k = 0; k < 3; ++k) x[i][k] = dd(kBodies[i].x[k]) + dd(dx[i][k]), v[i][k] = kBodies[i].v[k];
 			}
 		}
 
 		void drift(double h)
 		{
-			for (int i = 0; i < kN; ++i)
+			for (int i = 0; i < g_n; ++i)
 				for (int k = 0; k < 3; ++k) x[i][k] += v[i][k] * dd(h);
 		}
 
 		void kick(double h)
 		{
-			std::array<vec_dd, kN> a{};
-			for (int i = 0; i < kN; ++i)
-				for (int j = i + 1; j < kN; ++j) {
+			std::array<vec_dd, kMaxN> a{};
+			for (int i = 0; i < g_n; ++i)
+				for (int j = i + 1; j < g_n; ++j) {
 					vec_dd r;
 					for (int k = 0; k < 3; ++k) r[k] = x[j][k] - x[i][k];
 					const dd r2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
@@ -114,8 +132,14 @@ namespace
 						a[j][k] -= gm[i] * inv_r3 * r[k];
 					}
 				}
-			for (int i = 0; i < kN; ++i)
+			for (int i = 0; i < g_n; ++i)
 				for (int k = 0; k < 3; ++k) v[i][k] += a[i][k] * dd(h);
+		}
+
+		void reverse()
+		{
+			for (int i = 0; i < g_n; ++i)
+				for (dd& c : v[i]) c = -c;
 		}
 
 		snapshot snap() const { return {x, v}; }
@@ -123,11 +147,11 @@ namespace
 
 	// Accelerations from relative positions given in double (shared by the double-based variants).
 	template <class RelPos>
-	void kick_double(std::array<std::array<double, 3>, kN>& v, const double* gm, double h, RelPos&& rel)
+	void kick_double(std::array<vec_d, kMaxN>& v, const double* gm, double h, RelPos&& rel)
 	{
-		double a[kN][3] = {};
-		for (int i = 0; i < kN; ++i)
-			for (int j = i + 1; j < kN; ++j) {
+		double a[kMaxN][3] = {};
+		for (int i = 0; i < g_n; ++i)
+			for (int j = i + 1; j < g_n; ++j) {
 				double r[3];
 				rel(i, j, r); // r = x_j - x_i
 				const double r2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
@@ -137,36 +161,54 @@ namespace
 					a[j][k] -= gm[i] * inv_r3 * r[k];
 				}
 			}
-		for (int i = 0; i < kN; ++i)
+		for (int i = 0; i < g_n; ++i)
 			for (int k = 0; k < 3; ++k) v[i][k] += a[i][k] * h;
 	}
 
+	// Velocities in double, the part every variant except the reference shares.
+	struct double_velocities
+	{
+		std::array<vec_d, kMaxN> v;
+		double gm[kMaxN];
+
+		void init_velocities()
+		{
+			for (int i = 0; i < g_n; ++i) {
+				gm[i] = kBodies[i].gm;
+				for (int k = 0; k < 3; ++k) v[i][k] = kBodies[i].v[k];
+			}
+		}
+
+		void reverse()
+		{
+			for (int i = 0; i < g_n; ++i)
+				for (double& c : v[i]) c = -c;
+		}
+	};
+
 	// Plain double positions (with the offset added), optionally with Kahan-compensated position updates.
 	template <bool Kahan>
-	struct double_variant
+	struct double_variant : double_velocities
 	{
 		static constexpr const char* name = Kahan ? "double + Kahan summation" : "double";
-		std::array<std::array<double, 3>, kN> x, c, v;
-		double gm[kN];
+		std::array<vec_d, kMaxN> x, c;
 		double offset = 0;
 
-		void init(const body_data* b, const double (*dx)[3], double off)
+		void init(const double (*dx)[3], double off)
 		{
 			offset = off;
-			for (int i = 0; i < kN; ++i) {
-				gm[i] = b[i].gm;
+			init_velocities();
+			for (int i = 0; i < g_n; ++i)
 				for (int k = 0; k < 3; ++k) {
-					const dd exact = dd(b[i].x[k]) + dd(dx[i][k]) + dd(off);
+					const dd exact = dd(kBodies[i].x[k]) + dd(dx[i][k]) + dd(off);
 					x[i][k] = exact.hi;
 					c[i][k] = Kahan ? exact.lo : 0.0; // Kahan keeps the part the double cannot hold
-					v[i][k] = b[i].v[k];
 				}
-			}
 		}
 
 		void drift(double h)
 		{
-			for (int i = 0; i < kN; ++i)
+			for (int i = 0; i < g_n; ++i)
 				for (int k = 0; k < 3; ++k) {
 					if (Kahan) {
 						const double y = v[i][k] * h + c[i][k];
@@ -190,7 +232,7 @@ namespace
 		snapshot snap() const
 		{
 			snapshot s;
-			for (int i = 0; i < kN; ++i)
+			for (int i = 0; i < g_n; ++i)
 				for (int k = 0; k < 3; ++k) {
 					s.x[i][k] = dd(x[i][k]) + dd(c[i][k]) - dd(offset);
 					s.v[i][k] = v[i][k];
@@ -199,35 +241,72 @@ namespace
 		}
 	};
 
-	// fixed128 positions (one fixed128x4 per body: x, y, z, unused), double velocities. Displacements are converted to
-	// fixed point with the library's rounding; relative positions are subtracted exactly and then converted to double.
-	struct fixed_variant
+	// Double-double positions (with the offset added), double velocities: the usual alternative to fixed point.
+	struct dd_variant : double_velocities
 	{
-		static constexpr const char* name = FIXED128_ROUND_HALF_AWAY_FROM_ZERO ? "fixed128 (round half away)" : "fixed128 (truncate)";
-		std::array<fixed_t, kN> x;
-		std::array<std::array<double, 3>, kN> v;
-		double gm[kN];
-		fixed_t offset;
+		static constexpr const char* name = "double-double";
+		std::array<vec_dd, kMaxN> x;
+		double offset = 0;
 
-		void init(const body_data* b, const double (*dx)[3], double off)
+		void init(const double (*dx)[3], double off)
 		{
-			offset = fixed_t{fx128::double4{off, off, off, 0.0}};
-			for (int i = 0; i < kN; ++i) {
-				gm[i] = b[i].gm;
-				x[i] = fixed_t{fx128::double4{b[i].x[0], b[i].x[1], b[i].x[2], 0.0}} + fixed_t{fx128::double4{dx[i][0], dx[i][1], dx[i][2], 0.0}} + offset;
-				for (int k = 0; k < 3; ++k) v[i][k] = b[i].v[k];
-			}
+			offset = off;
+			init_velocities();
+			for (int i = 0; i < g_n; ++i)
+				for (int k = 0; k < 3; ++k) x[i][k] = dd(kBodies[i].x[k]) + dd(dx[i][k]) + dd(off);
 		}
 
 		void drift(double h)
 		{
-			for (int i = 0; i < kN; ++i) x[i] += fixed_t{fx128::double4{v[i][0] * h, v[i][1] * h, v[i][2] * h, 0.0}};
+			for (int i = 0; i < g_n; ++i)
+				for (int k = 0; k < 3; ++k) x[i][k] += dd(v[i][k] * h);
 		}
 
 		void kick(double h)
 		{
 			kick_double(v, gm, h, [&](int i, int j, double* r) {
-				const fx128::double4 d = static_cast<fx128::double4>(x[j] - x[i]);
+				for (int k = 0; k < 3; ++k) r[k] = (x[j][k] - x[i][k]).to_double();
+			});
+		}
+
+		snapshot snap() const
+		{
+			snapshot s;
+			for (int i = 0; i < g_n; ++i)
+				for (int k = 0; k < 3; ++k) {
+					s.x[i][k] = x[i][k] - dd(offset);
+					s.v[i][k] = v[i][k];
+				}
+			return s;
+		}
+	};
+
+	// fixed128 positions (one fixed128x4 per body: x, y, z, unused), double velocities. Displacements are added with
+	// fixed128x4 += double4 (the library's rounding); relative positions come from subtract_to_double.
+	struct fixed_variant : double_velocities
+	{
+		static constexpr const char* name = FIXED128_ROUND_HALF_AWAY_FROM_ZERO ? "fixed128 (round half away)" : "fixed128 (truncate)";
+		std::array<fixed_t, kMaxN> x;
+		fixed_t offset;
+
+		void init(const double (*dx)[3], double off)
+		{
+			offset = fixed_t{fx128::double4{off, off, off, 0.0}};
+			init_velocities();
+			for (int i = 0; i < g_n; ++i)
+				x[i] = fixed_t{fx128::double4{kBodies[i].x[0], kBodies[i].x[1], kBodies[i].x[2], 0.0}} +
+				       fx128::double4{dx[i][0], dx[i][1], dx[i][2], 0.0} + offset;
+		}
+
+		void drift(double h)
+		{
+			for (int i = 0; i < g_n; ++i) x[i] += fx128::double4{v[i][0] * h, v[i][1] * h, v[i][2] * h, 0.0};
+		}
+
+		void kick(double h)
+		{
+			kick_double(v, gm, h, [&](int i, int j, double* r) {
+				const fx128::double4 d = fx128::subtract_to_double(x[j], x[i]);
 				r[0] = d.x, r[1] = d.y, r[2] = d.z;
 			});
 		}
@@ -245,7 +324,7 @@ namespace
 		snapshot snap() const
 		{
 			snapshot s;
-			for (int i = 0; i < kN; ++i) {
+			for (int i = 0; i < g_n; ++i) {
 				const fixed_t p = x[i] - offset;
 				const uint64_t u[3] = {p.upper.x, p.upper.y, p.upper.z}, l[3] = {p.lower.x, p.lower.y, p.lower.z};
 				for (int k = 0; k < 3; ++k) {
@@ -261,23 +340,30 @@ namespace
 
 	struct run_result
 	{
-		std::vector<snapshot> snaps; // at the checkpoints
+		std::vector<snapshot> snaps; // drift: at the start and the checkpoints; reverse: at the start, the turning point, back at the start
 		double ns_per_step = 0;
 	};
+
+	template <class Variant>
+	void advance(Variant& s, const std::vector<substep>& scheme, double dt, long long steps)
+	{
+		for (long long step = 0; step < steps; ++step)
+			for (const substep& sub : scheme) sub.drift ? s.drift(sub.c * dt) : s.kick(sub.c * dt);
+	}
 
 	template <class Variant>
 	run_result run(const std::vector<substep>& scheme, double dt, const std::vector<long long>& checkpoints, const double (*dx)[3], double offset)
 	{
 		Variant s;
-		s.init(kBodies, dx, offset);
+		s.init(dx, offset);
 		run_result r;
 		r.snaps.push_back(s.snap());
 		long long step = 0;
 		double seconds = 0;
 		for (long long target : checkpoints) {
 			const auto t0 = std::chrono::steady_clock::now();
-			for (; step < target; ++step)
-				for (const substep& sub : scheme) sub.drift ? s.drift(sub.c * dt) : s.kick(sub.c * dt);
+			advance(s, scheme, dt, target - step);
+			step = target;
 			seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 			r.snaps.push_back(s.snap());
 		}
@@ -285,19 +371,37 @@ namespace
 		return r;
 	}
 
+	// Forward `steps`, reverse the velocities, `steps` back (the reversed scheme is the same: it is palindromic).
+	template <class Variant>
+	run_result run_reverse(const std::vector<substep>& scheme, double dt, long long steps, const double (*dx)[3], double offset)
+	{
+		Variant s;
+		s.init(dx, offset);
+		run_result r;
+		r.snaps.push_back(s.snap());
+		const auto t0 = std::chrono::steady_clock::now();
+		advance(s, scheme, dt, steps);
+		r.snaps.push_back(s.snap());
+		s.reverse();
+		advance(s, scheme, dt, steps);
+		r.ns_per_step = steps ? std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() * 1e9 / (2.0 * steps) : 0;
+		r.snaps.push_back(s.snap());
+		return r;
+	}
+
 	dd energy(const snapshot& s)
 	{
 		dd e = 0;
-		for (int i = 0; i < kN; ++i) {
+		for (int i = 0; i < g_n; ++i) {
 			const dd v2 = s.v[i][0] * s.v[i][0] + s.v[i][1] * s.v[i][1] + s.v[i][2] * s.v[i][2];
 			e += dd(0.5) * dd(kBodies[i].gm) * v2;
-			for (int j = i + 1; j < kN; ++j) {
+			for (int j = i + 1; j < g_n; ++j) {
 				vec_dd r;
 				for (int k = 0; k < 3; ++k) r[k] = s.x[j][k] - s.x[i][k];
 				e -= dd(kBodies[i].gm) * dd(kBodies[j].gm) / sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
 			}
 		}
-		return e; // energy * G (the masses are given as GM)
+		return e; // energy * G (the masses are given as GM); the massless test particle does not contribute
 	}
 
 	double distance(const vec_dd& a, const vec_dd& b)
@@ -308,20 +412,22 @@ namespace
 
 	struct metrics
 	{
-		double pos_err = 0; // max over bodies of |x - x_ref| (m)
-		double rel_err = 0; // max over the moons of |(x_moon - x_Jupiter) - reference| (m)
-		double energy_err = 0; // |E - E_ref(t)| / |E_ref(0)|: the integrator's own energy error cancels, rounding remains
+		double pos_err = 0;      // max over the massive bodies of |x - x_ref| (m)
+		double rel_err = 0;      // max over the moons of |(x_moon - x_Jupiter) - reference| (m)
+		double particle_err = 0; // |x - x_ref| of the test particle (m), if present
+		double energy_err = 0;   // |E - E_ref| / |E_ref(0)|: the integrator's own energy error cancels, rounding remains
 	};
 
 	metrics measure(const snapshot& s, const snapshot& ref, const dd& e0)
 	{
 		metrics m;
-		for (int i = 0; i < kN; ++i) m.pos_err = std::max(m.pos_err, distance(s.x[i], ref.x[i]));
-		for (int i = 2; i < kN; ++i) {
+		for (int i = 0; i < kMassive; ++i) m.pos_err = std::max(m.pos_err, distance(s.x[i], ref.x[i]));
+		for (int i = 2; i < kMassive; ++i) {
 			vec_dd a, b;
 			for (int k = 0; k < 3; ++k) a[k] = s.x[i][k] - s.x[kJupiter][k], b[k] = ref.x[i][k] - ref.x[kJupiter][k];
 			m.rel_err = std::max(m.rel_err, distance(a, b));
 		}
+		if (g_n > kMassive) m.particle_err = distance(s.x[kMassive], ref.x[kMassive]);
 		m.energy_err = std::fabs(((energy(s) - energy(ref)) / e0).to_double());
 		return m;
 	}
@@ -340,6 +446,133 @@ namespace
 		if (n < 3) return NAN;
 		return (n * sxy - sx * sy) / (n * sxx - sx * sx);
 	}
+
+	double median(std::vector<double> v)
+	{
+		std::sort(v.begin(), v.end());
+		return v.empty() ? NAN : v[v.size() / 2];
+	}
+
+	constexpr int kVariants = 4;
+	const char* const kVariantNames[kVariants] = {double_variant<false>::name, double_variant<true>::name, dd_variant::name, fixed_variant::name};
+	constexpr int kDouble = 0, kFixed = 3;
+
+	// Tiny, run-dependent perturbation of the initial positions (identical for every variant and the reference).
+	void perturbation(int run_index, double (*dx)[3])
+	{
+		for (int i = 0; i < kMaxN; ++i)
+			for (int k = 0; k < 3; ++k) dx[i][k] = 1e-3 * run_index * ((i * 3 + k) % 5 - 2);
+	}
+
+	bool check_fixed_vs_double(double fixed_err, double double_err)
+	{
+		// fixed128 positions must not be less accurate than double positions (with a margin for rounding noise).
+		if (!(fixed_err <= 2 * double_err + 1e-6)) {
+			std::printf("CHECK FAILED: fixed128 position error %.3g m > double position error %.3g m\n", fixed_err, double_err);
+			return false;
+		}
+		std::printf("check passed\n");
+		return true;
+	}
+
+	int drift_test(const std::vector<substep>& scheme, double dt, double years, double offset, int runs, bool check)
+	{
+		const long long total_steps = static_cast<long long>(years * kYear / dt);
+		// Log-spaced checkpoints from about one day to the end.
+		std::vector<long long> checkpoints;
+		for (double t = 86400; t < years * kYear * 1.0001; t *= 1.5) {
+			const long long s = std::max(1LL, static_cast<long long>(t / dt));
+			if (checkpoints.empty() || s > checkpoints.back()) checkpoints.push_back(std::min(s, total_steps));
+		}
+		if (checkpoints.empty() || checkpoints.back() != total_steps) checkpoints.push_back(total_steps);
+
+		std::vector<double> pos[kVariants], rel[kVariants], part[kVariants], en[kVariants], slope[kVariants], ns[kVariants];
+		double ref_ns = 0;
+		for (int run_index = 0; run_index < runs; ++run_index) {
+			double dx[kMaxN][3];
+			perturbation(run_index, dx);
+			const run_result ref = run<reference_variant>(scheme, dt, checkpoints, dx, offset);
+			ref_ns += ref.ns_per_step / runs;
+			const dd e0 = energy(ref.snaps[0]);
+			const run_result results[kVariants] = {run<double_variant<false>>(scheme, dt, checkpoints, dx, offset),
+				run<double_variant<true>>(scheme, dt, checkpoints, dx, offset), run<dd_variant>(scheme, dt, checkpoints, dx, offset),
+				run<fixed_variant>(scheme, dt, checkpoints, dx, offset)};
+
+			if (run_index == 0) {
+				std::printf("## Run 1: error vs the double-double reference over time\n\n");
+				std::printf("| time (years) | variant | max position error (m) | max moon-Jupiter error (m) | test particle error (m) | relative energy error |\n|---|---|---|---|---|---|\n");
+				for (size_t c = 0; c < checkpoints.size(); c += std::max<size_t>(1, checkpoints.size() / 8)) {
+					for (int v = 0; v < kVariants; ++v) {
+						const metrics m = measure(results[v].snaps[c + 1], ref.snaps[c + 1], e0);
+						std::printf("| %.4g | %s | %.3g | %.3g | %.3g | %.3g |\n", checkpoints[c] * dt / kYear, kVariantNames[v], m.pos_err, m.rel_err,
+							m.particle_err, m.energy_err);
+					}
+				}
+				const dd e_end = energy(ref.snaps.back());
+				std::printf("\nintegrator energy error of the reference at the end (truncation, not rounding; cancels in the table): %.3g\n\n",
+					std::fabs(((e_end - e0) / e0).to_double()));
+			}
+
+			for (int v = 0; v < kVariants; ++v) {
+				std::vector<double> t, e;
+				for (size_t c = 0; c < checkpoints.size(); ++c) {
+					t.push_back(checkpoints[c] * dt);
+					e.push_back(measure(results[v].snaps[c + 1], ref.snaps[c + 1], e0).energy_err);
+				}
+				const metrics m = measure(results[v].snaps.back(), ref.snaps.back(), e0);
+				pos[v].push_back(m.pos_err);
+				rel[v].push_back(m.rel_err);
+				part[v].push_back(m.particle_err);
+				en[v].push_back(m.energy_err);
+				slope[v].push_back(growth_exponent(t, e));
+				ns[v].push_back(results[v].ns_per_step);
+			}
+		}
+
+		std::printf("## Summary at %.3g years (median over %d run(s))\n\n", years, runs);
+		std::printf("| variant | ns per step | max position error (m) | max moon-Jupiter error (m) | test particle error (m) | relative energy error | energy error growth exponent |\n|---|---|---|---|---|---|---|\n");
+		for (int v = 0; v < kVariants; ++v)
+			std::printf("| %s | %.0f | %.3g | %.3g | %.3g | %.3g | %.2f |\n", kVariantNames[v], median(ns[v]), median(pos[v]), median(rel[v]),
+				median(part[v]), median(en[v]), median(slope[v]));
+		std::printf("| %s | %.0f | 0 | 0 | 0 | 0 | |\n", reference_variant::name, ref_ns);
+		std::printf("\nGrowth exponent: ~0.5 = unbiased rounding (random walk), ~1 = systematic drift.\n");
+		return check && !check_fixed_vs_double(median(pos[kFixed]), median(pos[kDouble])) ? 1 : 0;
+	}
+
+	int reverse_test(const std::vector<substep>& scheme, double dt, double years, double offset, int runs, bool check)
+	{
+		const long long steps = static_cast<long long>(years * kYear / dt);
+		std::vector<double> pos[kVariants + 1], rel[kVariants + 1], part[kVariants + 1], turn[kVariants + 1], ns[kVariants + 1];
+		for (int run_index = 0; run_index < runs; ++run_index) {
+			double dx[kMaxN][3];
+			perturbation(run_index, dx);
+			const run_result results[kVariants + 1] = {run_reverse<double_variant<false>>(scheme, dt, steps, dx, offset),
+				run_reverse<double_variant<true>>(scheme, dt, steps, dx, offset), run_reverse<dd_variant>(scheme, dt, steps, dx, offset),
+				run_reverse<fixed_variant>(scheme, dt, steps, dx, offset), run_reverse<reference_variant>(scheme, dt, steps, dx, offset)};
+			for (int v = 0; v <= kVariants; ++v) {
+				// The start and the end of the same variant; velocities are reversed at the end, so only positions count.
+				const metrics m = measure(results[v].snaps[2], results[v].snaps[0], dd(1));
+				turn[v].push_back(measure(results[v].snaps[1], results[kVariants].snaps[1], dd(1)).pos_err);
+				pos[v].push_back(m.pos_err);
+				rel[v].push_back(m.rel_err);
+				part[v].push_back(m.particle_err);
+				ns[v].push_back(results[v].ns_per_step);
+			}
+		}
+		std::printf("## Reversibility: %.3g years forward and back (median over %d run(s))\n\n", years, runs);
+		std::printf("Distance from the start after returning; exact arithmetic would return exactly, so this is rounding only.\n"
+					"Double positions can also return exactly: x + d - d == x while x stays within one binade, and far from the\n"
+					"origin they do not move at all. The last column, the massive bodies' error at the turning point against the\n"
+					"reference, shows whether a variant moved correctly.\n\n");
+		std::printf("| variant | ns per step | max position error (m) | max moon-Jupiter error (m) | test particle error (m) | error at the turning point (m) |\n"
+					"|---|---|---|---|---|---|\n");
+		for (int v = 0; v <= kVariants; ++v)
+			std::printf("| %s | %.0f | %.3g | %.3g | %.3g | %.3g |\n", v < kVariants ? kVariantNames[v] : reference_variant::name, median(ns[v]),
+				median(pos[v]), median(rel[v]), median(part[v]), median(turn[v]));
+		// The check uses the turning point: over short times double positions can return exactly (x + d - d == x as
+		// long as x stays within one binade), so the return distance of double is no meaningful bar there.
+		return check && !check_fixed_vs_double(median(turn[kFixed]), median(turn[kDouble])) ? 1 : 0;
+	}
 }
 
 int main(int argc, char** argv)
@@ -347,7 +580,7 @@ int main(int argc, char** argv)
 	double years = 100, offset = 0;
 	std::string scheme_name = "fr4";
 	int steps_per_orbit = 0, runs = 1;
-	bool check = false;
+	bool check = false, reverse = false;
 	for (int i = 1; i < argc; ++i) {
 		const std::string a = argv[i];
 		auto next = [&] { return i + 1 < argc ? argv[++i] : "0"; };
@@ -356,6 +589,8 @@ int main(int argc, char** argv)
 		else if (a == "--steps-per-orbit") steps_per_orbit = std::atoi(next());
 		else if (a == "--offset") offset = std::atof(next());
 		else if (a == "--runs") runs = std::atoi(next());
+		else if (a == "--particle") g_n = kMaxN;
+		else if (a == "--reverse") reverse = true;
 		else if (a == "--check") check = true;
 		else {
 			std::fprintf(stderr, "unknown argument %s\n", a.c_str());
@@ -365,89 +600,10 @@ int main(int argc, char** argv)
 	if (!steps_per_orbit) steps_per_orbit = scheme_name == "leapfrog" ? 2048 : 256;
 	const std::vector<substep> scheme = integrator(scheme_name);
 	const double dt = kIoPeriod / steps_per_orbit;
-	const long long total_steps = static_cast<long long>(years * kYear / dt);
 
-	// Log-spaced checkpoints from about one day to the end.
-	std::vector<long long> checkpoints;
-	for (double t = 86400; t < years * kYear * 1.0001; t *= 1.5) {
-		const long long s = std::max(1LL, static_cast<long long>(t / dt));
-		if (checkpoints.empty() || s > checkpoints.back()) checkpoints.push_back(std::min(s, total_steps));
-	}
-	if (checkpoints.empty() || checkpoints.back() != total_steps) checkpoints.push_back(total_steps);
-
-	std::printf("# Orbit drift: Sun, Jupiter, Io, Europa, Ganymede, Callisto\n\n");
+	std::printf("# Orbit %s: Sun, Jupiter, Io, Europa, Ganymede, Callisto%s\n\n", reverse ? "reversibility" : "drift",
+		g_n > kMassive ? ", test particle" : "");
 	std::printf("integrator %s, dt %.3f s (%d steps per Io orbit), %.3g years = %lld steps, offset %.3g m, fixed128 frac bits %d, %d run(s)\n\n",
-		scheme_name.c_str(), dt, steps_per_orbit, years, total_steps, offset, kFracBits, runs);
-
-	struct summary
-	{
-		const char* name;
-		std::vector<double> pos, rel, energy, slope, ns;
-	};
-	summary sums[] = {{double_variant<false>::name, {}, {}, {}, {}, {}}, {double_variant<true>::name, {}, {}, {}, {}, {}},
-		{fixed_variant::name, {}, {}, {}, {}, {}}};
-	double ref_ns = 0;
-
-	for (int run_index = 0; run_index < runs; ++run_index) {
-		// Tiny, run-dependent perturbation of the initial positions (identical for every variant and the reference).
-		double dx[kN][3] = {};
-		for (int i = 0; i < kN; ++i)
-			for (int k = 0; k < 3; ++k) dx[i][k] = 1e-3 * run_index * ((i * 3 + k) % 5 - 2);
-
-		const run_result ref = run<reference_variant>(scheme, dt, checkpoints, dx, offset);
-		ref_ns += ref.ns_per_step / runs;
-		const dd e0 = energy(ref.snaps[0]);
-		const run_result results[] = {run<double_variant<false>>(scheme, dt, checkpoints, dx, offset),
-			run<double_variant<true>>(scheme, dt, checkpoints, dx, offset), run<fixed_variant>(scheme, dt, checkpoints, dx, offset)};
-
-		if (run_index == 0) {
-			std::printf("## Run 1: error vs the double-double reference over time\n\n");
-			std::printf("| time (years) | variant | max position error (m) | max moon-Jupiter error (m) | relative energy error |\n|---|---|---|---|---|\n");
-			for (size_t c = 0; c < checkpoints.size(); c += std::max<size_t>(1, checkpoints.size() / 8)) {
-				for (int v = 0; v < 3; ++v) {
-					const metrics m = measure(results[v].snaps[c + 1], ref.snaps[c + 1], e0);
-					std::printf("| %.4g | %s | %.3g | %.3g | %.3g |\n", checkpoints[c] * dt / kYear, sums[v].name, m.pos_err, m.rel_err, m.energy_err);
-				}
-			}
-			const dd e_end = energy(ref.snaps.back());
-			std::printf("\nintegrator energy error of the reference at the end (truncation, not rounding; cancels in the table): %.3g\n\n",
-				std::fabs(((e_end - e0) / e0).to_double()));
-		}
-
-		for (int v = 0; v < 3; ++v) {
-			std::vector<double> t, e;
-			for (size_t c = 0; c < checkpoints.size(); ++c) {
-				t.push_back(checkpoints[c] * dt);
-				e.push_back(measure(results[v].snaps[c + 1], ref.snaps[c + 1], e0).energy_err);
-			}
-			const metrics m = measure(results[v].snaps.back(), ref.snaps.back(), e0);
-			sums[v].pos.push_back(m.pos_err);
-			sums[v].rel.push_back(m.rel_err);
-			sums[v].energy.push_back(m.energy_err);
-			sums[v].slope.push_back(growth_exponent(t, e));
-			sums[v].ns.push_back(results[v].ns_per_step);
-		}
-	}
-
-	auto median = [](std::vector<double> v) {
-		std::sort(v.begin(), v.end());
-		return v.empty() ? NAN : v[v.size() / 2];
-	};
-	std::printf("## Summary at %.3g years (median over %d run(s))\n\n", years, runs);
-	std::printf("| variant | ns per step | max position error (m) | max moon-Jupiter error (m) | relative energy error | energy error growth exponent |\n|---|---|---|---|---|---|\n");
-	for (const summary& s : sums)
-		std::printf("| %s | %.0f | %.3g | %.3g | %.3g | %.2f |\n", s.name, median(s.ns), median(s.pos), median(s.rel), median(s.energy), median(s.slope));
-	std::printf("| %s | %.0f | 0 | 0 | 0 | |\n", reference_variant::name, ref_ns);
-	std::printf("\nGrowth exponent: ~0.5 = unbiased rounding (random walk), ~1 = systematic drift.\n");
-
-	if (check) {
-		// fixed128 positions must not be less accurate than double positions (with a margin for rounding noise).
-		const double fixed_err = median(sums[2].pos), double_err = median(sums[0].pos);
-		if (!(fixed_err <= 2 * double_err + 1e-6)) {
-			std::printf("CHECK FAILED: fixed128 position error %.3g m > double position error %.3g m\n", fixed_err, double_err);
-			return 1;
-		}
-		std::printf("check passed\n");
-	}
-	return 0;
+		scheme_name.c_str(), dt, steps_per_orbit, years, static_cast<long long>(years * kYear / dt), offset, kFracBits, runs);
+	return reverse ? reverse_test(scheme, dt, years, offset, runs, check) : drift_test(scheme, dt, years, offset, runs, check);
 }

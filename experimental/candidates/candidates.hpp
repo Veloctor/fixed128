@@ -34,6 +34,35 @@ namespace candidates
 	template <class C>
 	struct has_ufixed128_to_double<C, std::void_t<decltype(&C::template ufixed128_to_double<0>)>> : std::true_type {};
 
+	// The fused operations on fixed128x4 (each optional as well).
+	// A candidate may restrict their domain (a "_limited" variant) by declaring
+	//   static constexpr int subtract_max_log2 = N;   // subtract_to_double / _float: |a - b| < 2^N units (default 128: all inputs)
+	//   static constexpr int add_max_log2 = N;        // add_double: -2^N <= b * 2^F < 2^N (default 127: the conversion's whole domain)
+	template <class C, class = void>
+	struct has_subtract_to_double : std::false_type {};
+	template <class C>
+	struct has_subtract_to_double<C, std::void_t<decltype(&C::template subtract_to_double<0>)>> : std::true_type {};
+
+	template <class C, class = void>
+	struct has_subtract_to_float : std::false_type {};
+	template <class C>
+	struct has_subtract_to_float<C, std::void_t<decltype(&C::template subtract_to_float<0>)>> : std::true_type {};
+
+	template <class C, class = void>
+	struct has_add_double : std::false_type {};
+	template <class C>
+	struct has_add_double<C, std::void_t<decltype(&C::template add_double<0>)>> : std::true_type {};
+
+	template <class C, class = void>
+	struct subtract_max_log2 : std::integral_constant<int, 128> {};
+	template <class C>
+	struct subtract_max_log2<C, std::void_t<decltype(C::subtract_max_log2)>> : std::integral_constant<int, C::subtract_max_log2> {};
+
+	template <class C, class = void>
+	struct add_max_log2 : std::integral_constant<int, 127> {};
+	template <class C>
+	struct add_max_log2<C, std::void_t<decltype(C::add_max_log2)>> : std::integral_constant<int, C::add_max_log2> {};
+
 	template <class T>
 	struct type_tag
 	{

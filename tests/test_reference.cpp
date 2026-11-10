@@ -44,6 +44,32 @@ TEST_SUITE("reference implementation")
 		CHECK(ref::fixed128_to_double({0, 3}, 1, true) == 1.5);
 	}
 
+	TEST_CASE("hand-computed fixed128 -> float (round to nearest, ties to even)")
+	{
+		CHECK(ref::fixed128_to_float({0, 1ull << 36}, 36) == 1.0f);
+		CHECK(ref::fixed128_to_float(minus(1), 0) == -1.0f);
+		CHECK(ref::fixed128_to_float({0, (1ull << 24) + 1}, 0) == 0x1p24f);              // tie, even stays
+		CHECK(ref::fixed128_to_float({0, (1ull << 24) + 3}, 0) == 0x1.000004p24f);       // tie, odd rounds up
+		CHECK(ref::fixed128_to_float({1, 1}, 0) == 0x1p64f);                             // sticky far below
+		CHECK(ref::fixed128_to_float({~0ull >> 1, ~0ull}, 0) == 0x1p127f);               // 2^127 - 1 rounds up
+		CHECK(ref::fixed128_to_float({1ull << 63, 0}, 0) == -0x1p127f);
+		CHECK(ref::fixed128_to_float({0, 1}, 127) == 0x1p-127f);                         // a float subnormal, exact
+		CHECK(ref::fixed128_to_float({0, 3}, 1) == 1.5f);
+	}
+
+	TEST_CASE("fixed128 -> float agrees with the hardware int64 -> float conversion")
+	{
+		mismatch_log log;
+		std::mt19937_64 rng(kSeed + 21);
+		for (int i = 0; i < kRandomCount; ++i) {
+			const int64_t x = static_cast<int64_t>(rng() >> (1 + rng() % 63));
+			const int64_t v = rng() & 1 ? -x : x;
+			const ref::u128 r{v < 0 ? ~0ull : 0, static_cast<uint64_t>(v)};
+			if (ref::fixed128_to_float(r, 0) != static_cast<float>(v)) log.add("%lld", static_cast<long long>(v));
+		}
+		CHECK_NO_MISMATCH(log);
+	}
+
 // Not on Windows: there clang does not link the runtime functions that convert __int128 to double.
 #if defined(__SIZEOF_INT128__) && !defined(_WIN32)
 	TEST_CASE("agrees with an independent implementation on unsigned __int128")

@@ -17,12 +17,17 @@ target_compile_definitions(fixed128_bench PRIVATE
 
 # Optional: the same benchmarks compiled for the build machine (-march=native), e.g. to get the AVX-512 upper bounds.
 # The compiler may then generate different code for the library too; compare with fixed128_bench.
-option(FIXED128_BENCH_NATIVE "Also build fixed128_bench_native with -march=native (GCC/Clang only)" OFF)
-if(FIXED128_BENCH_NATIVE AND NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+option(FIXED128_BENCH_NATIVE "Also build fixed128_bench_native with -march=native (GCC, Clang, clang-cl)" OFF)
+if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+	set(_fixed128_native_flag /clang:-march=native) # clang-cl; MSVC has no equivalent
+else()
+	set(_fixed128_native_flag -march=native)
+endif()
+if(FIXED128_BENCH_NATIVE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 	add_executable(fixed128_bench_native bench_conversions.cpp)
 	target_link_libraries(fixed128_bench_native PRIVATE fixed128::fixed128)
 	target_include_directories(fixed128_bench_native PRIVATE ${PROJECT_SOURCE_DIR}/third_party/nanobench ${PROJECT_SOURCE_DIR}/experimental)
-	target_compile_options(fixed128_bench_native PRIVATE -march=native)
+	target_compile_options(fixed128_bench_native PRIVATE ${_fixed128_native_flag})
 	target_compile_definitions(fixed128_bench_native PRIVATE
 		FIXED128_BENCH_FLAGS="${_fixed128_flags} -march=native"
 		FIXED128_GIT_DESCRIBE="${_fixed128_describe}")

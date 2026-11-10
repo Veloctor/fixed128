@@ -3,24 +3,41 @@
 	"configurePresets": [
 		{
 			"name": "release",
-			"displayName": "Release (Ninja)",
+			"displayName": "Release (Ninja, the environment's default compiler)",
 			"generator": "Ninja",
 			"binaryDir": "${sourceDir}/build/${presetName}",
 			"cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
 		},
 		{
 			"name": "debug",
-			"displayName": "Debug (Ninja)",
+			"displayName": "Debug (Ninja, the environment's default compiler)",
 			"inherits": "release",
+			"cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+		},
+		{
+			"name": "clang-cl-release",
+			"displayName": "Release (Ninja, clang-cl): the preferred Windows build",
+			"inherits": "release",
+			"cacheVariables": { "CMAKE_CXX_COMPILER": "clang-cl" },
+			"condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+		},
+		{
+			"name": "clang-cl-debug",
+			"displayName": "Debug (Ninja, clang-cl)",
+			"inherits": "clang-cl-release",
 			"cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
 		}
 	],
 	"buildPresets": [
 		{ "name": "release", "configurePreset": "release" },
-		{ "name": "debug", "configurePreset": "debug" }
+		{ "name": "debug", "configurePreset": "debug" },
+		{ "name": "clang-cl-release", "configurePreset": "clang-cl-release" },
+		{ "name": "clang-cl-debug", "configurePreset": "clang-cl-debug" }
 	],
 	"testPresets": [
 		{ "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
-		{ "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } }
+		{ "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
+		{ "name": "clang-cl-release", "configurePreset": "clang-cl-release", "output": { "outputOnFailure": true } },
+		{ "name": "clang-cl-debug", "configurePreset": "clang-cl-debug", "output": { "outputOnFailure": true } }
 	]
 }

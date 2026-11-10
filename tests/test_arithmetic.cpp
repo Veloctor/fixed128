@@ -103,3 +103,41 @@ TEST_SUITE("arithmetic")
 		CHECK_NO_MISMATCH(log);
 	}
 }
+
+TEST_SUITE("arithmetic")
+{
+	// The candidate contract tests check fixed128x4 + double4 (candidates/library.hpp); these check the other operators.
+	TEST_CASE_TEMPLATE("fixed128x4 - += -= double4 match a -/+ the converted double", F, FIXED128_TEST_FRAC_BITS)
+	{
+		mismatch_log log;
+		std::mt19937_64 rng(kSeed + 6);
+		for (int i = 0; i < kRandomCount; i += 4) {
+			ref::u128 a[4];
+			lanes_i64 ah, al;
+			lanes_f64 b;
+			for (int l = 0; l < 4; ++l) {
+				a[l] = random_operand(rng);
+				ah[l] = a[l].hi, al[l] = a[l].lo;
+				b[l] = random_scaled_double(rng, -8, 127, true, F::value);
+			}
+			const fixed128x4<F::value> va{from_lanes(ah), from_lanes(al)};
+			const fixed128x4<F::value> diff = va - from_lanes(b);
+			fixed128x4<F::value> acc_add = va, acc_sub = va;
+			acc_add += from_lanes(b);
+			acc_sub -= from_lanes(b);
+			for (int l = 0; l < 4; ++l) {
+				const ref::u128 conv = ref::double_to_fixed128(b[l], F::value, kRounding);
+				struct { const char* op; const fixed128x4<F::value>& v; ref::u128 expected; } cases[] = {
+					{"x4 - double4", diff, ref::sub(a[l], conv)},
+					{"x4 += double4", acc_add, ref::add(a[l], conv)},
+					{"x4 -= double4", acc_sub, ref::sub(a[l], conv)},
+				};
+				for (const auto& c : cases) {
+					const ref::u128 got{to_lanes(c.v.upper)[l], to_lanes(c.v.lower)[l]};
+					if (got != c.expected) log_mismatch(log, c.op, a[l], conv, got, c.expected);
+				}
+			}
+		}
+		CHECK_NO_MISMATCH(log);
+	}
+}

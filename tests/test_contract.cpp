@@ -6,6 +6,8 @@
 #include "mismatch_log.hpp"
 #include "test_helpers.hpp"
 
+#include <cmath>
+
 using namespace fx128;
 
 namespace
@@ -171,6 +173,138 @@ TEST_SUITE("contract")
 				INFO(config_name<C, F>());
 				mismatch_log log;
 				check_fixed128_to_double(inputs, false, F, C::max_ulp, C::template ufixed128_to_double<F>, log);
+				CHECK_NO_MISMATCH(log);
+			}
+		});
+	}
+}
+
+// ---- fused operations on fixed128x4 ----
+
+namespace
+{
+	template <int F>
+	fixed128x4<F> make_x4(const ref::u128 (&v)[4])
+	{
+		return {ulong4{v[0].hi, v[1].hi, v[2].hi, v[3].hi}, ulong4{v[0].lo, v[1].lo, v[2].lo, v[3].lo}};
+	}
+
+	// Positions b anywhere in the 128-bit range, shaped to exercise borrows between the halves and the pieces.
+	ref::u128 random_position(std::mt19937_64& rng)
+	{
+		switch (rng() % 5) {
+		case 0: return {rng(), rng()};
+		case 1: return {rng(), ~0ull - (rng() % 4)};
+		case 2: return {rng(), rng() % 4};
+		case 3: return {rng() % 2 ? 0 : ~0ull, rng()};
+		default: return ref::shr(random_u128(rng), static_cast<int>(rng() % 128));
+		}
+	}
+
+	// Pairs (a, b) whose difference a - b runs through every fixed128 -> double test value of magnitude < 2^max_log2,
+	// with b at random positions; returns the pairs and the differences.
+	struct difference_inputs
+	{
+		std::vector<ref::u128> a, b, diff;
+	};
+
+	difference_inputs difference_pairs(int max_log2)
+	{
+		std::mt19937_64 rng(kSeed + 4);
+		difference_inputs in;
+		for (const ref::u128& x : fixed128_inputs(true)) {
+			const bool negative = x.hi >> 63;
+			const ref::u128 m = negative ? ref::neg(x) : x;
+			if (max_log2 < 128 && !ref::is_zero(m) && ref::msb(m) >= max_log2) continue;
+			const ref::u128 b = random_position(rng);
+			in.a.push_back(ref::add(b, x));
+			in.b.push_back(b);
+			in.diff.push_back(x);
+		}
+		return in;
+	}
+
+	template <int F, typename Op, typename Check>
+	void for_each_difference_x4(const difference_inputs& in, Op op, Check check)
+	{
+		for (size_t i = 0; i + 4 <= in.a.size(); i += 4) {
+			const ref::u128 a[4] = {in.a[i], in.a[i + 1], in.a[i + 2], in.a[i + 3]};
+			const ref::u128 b[4] = {in.b[i], in.b[i + 1], in.b[i + 2], in.b[i + 3]};
+			const auto got = to_lanes(op(make_x4<F>(a), make_x4<F>(b)));
+			for (size_t l = 0; l < 4; ++l) check(a[l], b[l], in.diff[i + l], got[l]);
+		}
+	}
+}
+
+TEST_SUITE("contract")
+{
+	TEST_CASE("subtract_to_double is within max_ulp of the correctly rounded a - b")
+	{
+		for_each_candidate_and_scale([](auto candidate, auto scale) {
+			using C = typename decltype(candidate)::type;
+			constexpr int F = decltype(scale)::type::value;
+			if constexpr (candidates::has_subtract_to_double<C>::value) {
+				INFO(config_name<C, F>());
+				mismatch_log log;
+				for_each_difference_x4<F>(difference_pairs(candidates::subtract_max_log2<C>::value), C::template subtract_to_double<F>,
+					[&](ref::u128 a, ref::u128 b, ref::u128 diff, double got) {
+						const double expected = ref::fixed128_to_double(diff, F, true);
+						if (ref::ulp_distance(got, expected) > C::max_ulp)
+							log.add("a=%016llx_%016llx b=%016llx_%016llx got=%a expected=%a", (unsigned long long)a.hi, (unsigned long long)a.lo,
+								(unsigned long long)b.hi, (unsigned long long)b.lo, got, expected);
+					});
+				CHECK_NO_MISMATCH(log);
+			}
+		});
+	}
+
+	TEST_CASE("subtract_to_float is within max_ulp float ULP of the correctly rounded a - b")
+	{
+		for_each_candidate_and_scale([](auto candidate, auto scale) {
+			using C = typename decltype(candidate)::type;
+			constexpr int F = decltype(scale)::type::value;
+			if constexpr (candidates::has_subtract_to_float<C>::value) {
+				INFO(config_name<C, F>());
+				mismatch_log log;
+				for_each_difference_x4<F>(difference_pairs(candidates::subtract_max_log2<C>::value), C::template subtract_to_float<F>,
+					[&](ref::u128 a, ref::u128 b, ref::u128 diff, float got) {
+						const float expected = ref::fixed128_to_float(diff, F);
+						if (ref::ulp_distance(got, expected) > C::max_ulp)
+							log.add("a=%016llx_%016llx b=%016llx_%016llx got=%a expected=%a", (unsigned long long)a.hi, (unsigned long long)a.lo,
+								(unsigned long long)b.hi, (unsigned long long)b.lo, static_cast<double>(got), static_cast<double>(expected));
+					});
+				CHECK_NO_MISMATCH(log);
+			}
+		});
+	}
+
+	TEST_CASE("add_double is exactly a + the converted b, wrapping modulo 2^128")
+	{
+		for_each_candidate_and_scale([](auto candidate, auto scale) {
+			using C = typename decltype(candidate)::type;
+			constexpr int F = decltype(scale)::type::value;
+			if constexpr (candidates::has_add_double<C>::value) {
+				INFO(config_name<C, F>());
+				const ref::rounding rounding = rounding_of<C>();
+				constexpr int max_log2 = candidates::add_max_log2<C>::value;
+				std::vector<double> inputs;
+				for (double v : double_inputs(true, F))
+					if (v >= -ref::pow2(max_log2 - F) && v < ref::pow2(max_log2 - F)) inputs.push_back(v);
+				std::mt19937_64 rng(kSeed + 5);
+				mismatch_log log;
+				for (size_t i = 0; i + 4 <= inputs.size(); i += 4) {
+					const ref::u128 a[4] = {random_position(rng), random_position(rng), random_position(rng), random_position(rng)};
+					const lanes_f64 b{inputs[i], inputs[i + 1], inputs[i + 2], inputs[i + 3]};
+					const fixed128x4<F> sum = C::template add_double<F>(make_x4<F>(a), from_lanes(b));
+					for (size_t l = 0; l < 4; ++l) {
+						const ref::u128 expected = ref::add(a[l], ref::double_to_fixed128(b[l], F, rounding));
+						const ref::u128 got{to_lanes(sum.upper)[l], to_lanes(sum.lower)[l]};
+						if (got != expected)
+							log.add("a=%016llx_%016llx b=%a got=%016llx_%016llx expected=%016llx_%016llx", (unsigned long long)a[l].hi,
+								(unsigned long long)a[l].lo, b[l], (unsigned long long)got.hi, (unsigned long long)got.lo,
+								(unsigned long long)expected.hi, (unsigned long long)expected.lo);
+					}
+				}
 				CHECK_NO_MISMATCH(log);
 			}
 		});

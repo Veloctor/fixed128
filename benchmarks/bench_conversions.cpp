@@ -2,8 +2,8 @@
 //  * throughput:  cost per converted value with independent inputs, at several working-set sizes (L1 .. memory),
 //                 for every registered candidate (experimental/candidates) and for baselines;
 //  * latency:     a double -> fixed128 -> double dependency chain (the result feeds the next conversion);
-//  * scenarios:   realistic uses: positions relative to a camera, and pairwise gravity between bodies,
-//                 each also with plain double positions for comparison.
+//  * scenarios:   realistic uses: positions relative to a camera, pairwise gravity between bodies and the integration
+//                 step, each also with double-double (dd4.hpp) and plain double positions for comparison.
 //
 // Usage: fixed128_bench [--filter TEXT] [--sizes l1,l2,l3,mem] [--json FILE] [--ghz GHZ]
 //   --filter  run only benchmarks whose title or name contains TEXT (a bare argument works too)
@@ -15,9 +15,12 @@
 #define ANKERL_NANOBENCH_IMPLEMENT
 #include <nanobench.h>
 
+#include "dd4.hpp"
+
 #include <candidates/candidates.hpp>
 #include <fixed128/fixed128.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -216,6 +219,46 @@ namespace
 					for (size_t i = 0; i < n; ++i) out_d[i] = C::template ufixed128_to_double<kFracBits>(hi[i], lo[i]);
 					doNotOptimizeAway(out_d.data());
 				});
+			if constexpr (candidates::has_subtract_to_double<C>::value || candidates::has_subtract_to_float<C>::value) {
+				// differences up to 2^86 units (about 1e15 m at 36 frac bits: camera-relative), within the candidate's domain
+				const int max_log2 = std::min(86, candidates::subtract_max_log2<C>::value - 1);
+				std::mt19937_64 prng(2023);
+				std::vector<fixed128x4<kFracBits>> pa, pb;
+				for (size_t i = 0; i < n; ++i) {
+					pb.push_back({hi[i], lo[i]});
+					const double4 d{random_double(prng, -8, max_log2, true), random_double(prng, -8, max_log2, true),
+						random_double(prng, -8, max_log2, true), random_double(prng, -8, max_log2, true)};
+					pa.push_back(pb.back() + fixed128x4<kFracBits>{d});
+				}
+				if constexpr (candidates::has_subtract_to_double<C>::value)
+					r.run(b, "subtract_to_double" + who, [&] {
+						for (size_t i = 0; i < n; ++i) out_d[i] = C::template subtract_to_double<kFracBits>(pa[i], pb[i]);
+						doNotOptimizeAway(out_d.data());
+					});
+				if constexpr (candidates::has_subtract_to_float<C>::value) {
+					std::vector<float4> out_f(n);
+					r.run(b, "subtract_to_float" + who, [&] {
+						for (size_t i = 0; i < n; ++i) out_f[i] = C::template subtract_to_float<kFracBits>(pa[i], pb[i]);
+						doNotOptimizeAway(out_f.data());
+					});
+				}
+			}
+			if constexpr (candidates::has_add_double<C>::value) {
+				// steps up to 2^60 units (about 16000 km at 36 frac bits), within the candidate's domain
+				const int max_log2 = std::min(60, candidates::add_max_log2<C>::value);
+				std::mt19937_64 prng(2024);
+				std::vector<fixed128x4<kFracBits>> pa, out_p(n);
+				std::vector<double4> steps;
+				for (size_t i = 0; i < n; ++i) {
+					pa.push_back({hi[i], lo[i]});
+					steps.push_back({random_double(prng, -8, max_log2, true), random_double(prng, -8, max_log2, true),
+						random_double(prng, -8, max_log2, true), random_double(prng, -8, max_log2, true)});
+				}
+				r.run(b, "fixed128 + double (add_double)" + who, [&] {
+					for (size_t i = 0; i < n; ++i) out_p[i] = C::template add_double<kFracBits>(pa[i], steps[i]);
+					doNotOptimizeAway(out_p.data());
+				});
+			}
 		});
 
 #if defined(__SIZEOF_INT128__) && !defined(_WIN32)
@@ -321,54 +364,99 @@ namespace
 
 	// ---- scenarios ----
 
-	// Positions of bodies around one point far from the origin (~1 million light years), in fixed point and in double.
+	// Positions of bodies around one point far from the origin (~1 million light years): in fixed point, in
+	// double-double (the usual alternative, see dd4.hpp) and in double (precision lost that far away).
 	struct bodies
 	{
 		std::vector<fixed128x4<kFracBits>> x, y, z; // 4 bodies per element
-		std::vector<double4> dx, dy, dz;              // the same positions in double (precision lost far away)
+		std::vector<dd4::value> ddx, ddy, ddz;
+		std::vector<double4> dx, dy, dz;
 
 		explicit bodies(size_t count)
 		{
 			std::mt19937_64 rng(7);
 			std::uniform_real_distribution<double> offset(-1e9, 1e9);
 			const fixed128x4<kFracBits> far{9.46e21};
+			auto make = [&](std::vector<fixed128x4<kFracBits>>& f, std::vector<dd4::value>& dd, std::vector<double4>& d) {
+				const double4 o{offset(rng), offset(rng), offset(rng), offset(rng)};
+				f.push_back(far + fixed128x4<kFracBits>{o});
+				dd.push_back(to_dd(f.back()));
+				d.push_back(dd.back().hi);
+			};
 			for (size_t i = 0; i < count / 4; ++i) {
-				const double4 ox{offset(rng), offset(rng), offset(rng), offset(rng)}, oy{offset(rng), offset(rng), offset(rng), offset(rng)},
-					oz{offset(rng), offset(rng), offset(rng), offset(rng)};
-				x.push_back(far + fixed128x4<kFracBits>{ox});
-				y.push_back(far + fixed128x4<kFracBits>{oy});
-				z.push_back(far + fixed128x4<kFracBits>{oz});
-				dx.push_back(static_cast<double4>(x.back()));
-				dy.push_back(static_cast<double4>(y.back()));
-				dz.push_back(static_cast<double4>(z.back()));
+				make(x, ddx, dx);
+				make(y, ddy, dy);
+				make(z, ddz, dz);
 			}
+		}
+
+		// The double-double nearest to a fixed-point position (hi is exact in fixed point, so the low part is too).
+		static dd4::value to_dd(const fixed128x4<kFracBits>& p)
+		{
+			const double4 hi = static_cast<double4>(p);
+			return {hi, static_cast<double4>(p - fixed128x4<kFracBits>{hi})};
 		}
 	};
 
+	// Lane i % 4 of element i / 4, in all 4 lanes.
+	double4 broadcast(const std::vector<double4>& v, size_t i)
+	{
+		const double d = (&v[i / 4].x)[i % 4];
+		return {d, d, d, d};
+	}
+
 	void run_scenarios(runner& r, std::vector<ankerl::nanobench::Bench>& storage)
 	{
-		// Camera-relative positions: every frame, each body's position relative to the camera, as double.
+		using fx128::detail::to_double4;
+		const std::string backend = FIXED128_BACKEND_AVX2 ? "AVX2" : "scalar";
+
+		// Camera-relative positions: every frame, each body's position relative to the camera, as double or float.
 		{
 			storage.emplace_back();
 			ankerl::nanobench::Bench& b = storage.back();
-			b.title(std::string("scenario: camera-relative positions, ") + (FIXED128_BACKEND_AVX2 ? "AVX2" : "scalar") + " backend")
-				.unit("body").warmup(3).relative(false);
+			b.title("scenario: camera-relative positions, " + backend + " backend").unit("body").warmup(3).relative(false);
 			r.benches.push_back(&b);
 			const size_t count = 1 << 14;
 			const bodies s(count);
 			const fixed128x4<kFracBits> cam{9.46e21 + 1.0};
-			const double cam_d = static_cast<double4>(cam).x;
+			const dd4::value cam_dd = bodies::to_dd(cam);
+			const double cam_d = cam_dd.hi.x;
 			std::vector<double4> rx(count / 4), ry(count / 4), rz(count / 4);
+			std::vector<float4> fx(count / 4), fy(count / 4), fz(count / 4);
 			b.batch(count).minEpochIterations(20);
-			r.run(b, "camera-relative positions [fixed128 positions]", [&] {
+			r.run(b, "camera-relative positions [fixed128, subtract_to_double]", [&] {
 				for (size_t i = 0; i < count / 4; ++i) {
-					rx[i] = static_cast<double4>(s.x[i] - cam);
-					ry[i] = static_cast<double4>(s.y[i] - cam);
-					rz[i] = static_cast<double4>(s.z[i] - cam);
+					rx[i] = subtract_to_double(s.x[i], cam);
+					ry[i] = subtract_to_double(s.y[i], cam);
+					rz[i] = subtract_to_double(s.z[i], cam);
 				}
 				doNotOptimizeAway(rx.data());
 			});
-			r.run(b, "camera-relative positions [double positions, baseline]", [&] {
+			r.run(b, "camera-relative positions [fixed128, subtract_to_float]", [&] {
+				for (size_t i = 0; i < count / 4; ++i) {
+					fx[i] = subtract_to_float(s.x[i], cam);
+					fy[i] = subtract_to_float(s.y[i], cam);
+					fz[i] = subtract_to_float(s.z[i], cam);
+				}
+				doNotOptimizeAway(fx.data());
+			});
+			r.run(b, "camera-relative positions [double-double, accurate]", [&] {
+				for (size_t i = 0; i < count / 4; ++i) {
+					rx[i] = to_double4(dd4::subtract_to_double(s.ddx[i], cam_dd));
+					ry[i] = to_double4(dd4::subtract_to_double(s.ddy[i], cam_dd));
+					rz[i] = to_double4(dd4::subtract_to_double(s.ddz[i], cam_dd));
+				}
+				doNotOptimizeAway(rx.data());
+			});
+			r.run(b, "camera-relative positions [double-double, sloppy]", [&] {
+				for (size_t i = 0; i < count / 4; ++i) {
+					rx[i] = to_double4(dd4::subtract_to_double_sloppy(s.ddx[i], cam_dd));
+					ry[i] = to_double4(dd4::subtract_to_double_sloppy(s.ddy[i], cam_dd));
+					rz[i] = to_double4(dd4::subtract_to_double_sloppy(s.ddz[i], cam_dd));
+				}
+				doNotOptimizeAway(rx.data());
+			});
+			r.run(b, "camera-relative positions [double, baseline]", [&] {
 				for (size_t i = 0; i < count / 4; ++i) {
 					rx[i] = {s.dx[i].x - cam_d, s.dx[i].y - cam_d, s.dx[i].z - cam_d, s.dx[i].w - cam_d};
 					ry[i] = {s.dy[i].x - cam_d, s.dy[i].y - cam_d, s.dy[i].z - cam_d, s.dy[i].w - cam_d};
@@ -382,8 +470,7 @@ namespace
 		{
 			storage.emplace_back();
 			ankerl::nanobench::Bench& b = storage.back();
-			b.title(std::string("scenario: pairwise gravity, ") + (FIXED128_BACKEND_AVX2 ? "AVX2" : "scalar") + " backend")
-				.unit("pair").warmup(3).relative(false);
+			b.title("scenario: pairwise gravity, " + backend + " backend").unit("pair").warmup(3).relative(false);
 			r.benches.push_back(&b);
 			const size_t count = 256;
 			const bodies s(count);
@@ -397,25 +484,97 @@ namespace
 				ay[i] += ry.x * f[0] + ry.y * f[1] + ry.z * f[2] + ry.w * f[3];
 				az[i] += rz.x * f[0] + rz.y * f[1] + rz.z * f[2] + rz.w * f[3];
 			};
-			r.run(b, "pairwise gravity [fixed128 positions]", [&] {
+			r.run(b, "pairwise gravity [fixed128, subtract_to_double]", [&] {
 				for (size_t i = 0; i < count; ++i) {
 					const fixed128x4<kFracBits> px{s.x[i / 4][static_cast<int>(i % 4)]}, py{s.y[i / 4][static_cast<int>(i % 4)]},
 						pz{s.z[i / 4][static_cast<int>(i % 4)]};
 					for (size_t j = 0; j < count / 4; ++j)
-						accumulate(i, static_cast<double4>(s.x[j] - px), static_cast<double4>(s.y[j] - py), static_cast<double4>(s.z[j] - pz));
+						accumulate(i, subtract_to_double(s.x[j], px), subtract_to_double(s.y[j], py), subtract_to_double(s.z[j], pz));
 				}
 				doNotOptimizeAway(ax.data());
 			});
-			r.run(b, "pairwise gravity [double positions, baseline]", [&] {
+			r.run(b, "pairwise gravity [double-double, accurate]", [&] {
+				auto lane = [](const std::vector<dd4::value>& v, size_t i) {
+					const double h = (&v[i / 4].hi.x)[i % 4], l = (&v[i / 4].lo.x)[i % 4];
+					return dd4::value{{h, h, h, h}, {l, l, l, l}};
+				};
 				for (size_t i = 0; i < count; ++i) {
-					const double px = (&s.dx[i / 4].x)[i % 4], py = (&s.dy[i / 4].x)[i % 4], pz = (&s.dz[i / 4].x)[i % 4];
+					const dd4::value px = lane(s.ddx, i), py = lane(s.ddy, i), pz = lane(s.ddz, i);
+					for (size_t j = 0; j < count / 4; ++j)
+						accumulate(i, to_double4(dd4::subtract_to_double(s.ddx[j], px)), to_double4(dd4::subtract_to_double(s.ddy[j], py)),
+							to_double4(dd4::subtract_to_double(s.ddz[j], pz)));
+				}
+				doNotOptimizeAway(ax.data());
+			});
+			r.run(b, "pairwise gravity [double, baseline]", [&] {
+				for (size_t i = 0; i < count; ++i) {
+					const double4 px = broadcast(s.dx, i), py = broadcast(s.dy, i), pz = broadcast(s.dz, i);
 					for (size_t j = 0; j < count / 4; ++j) {
 						const double4 &x = s.dx[j], &y = s.dy[j], &z = s.dz[j];
-						accumulate(i, {x.x - px, x.y - px, x.z - px, x.w - px}, {y.x - py, y.y - py, y.z - py, y.w - py},
-							{z.x - pz, z.y - pz, z.z - pz, z.w - pz});
+						accumulate(i, {x.x - px.x, x.y - px.x, x.z - px.x, x.w - px.x}, {y.x - py.x, y.y - py.x, y.z - py.x, y.w - py.x},
+							{z.x - pz.x, z.y - pz.x, z.z - pz.x, z.w - pz.x});
 					}
 				}
 				doNotOptimizeAway(ax.data());
+			});
+		}
+
+		// Integration step: position += velocity * dt for every body, the update every integrator does.
+		{
+			storage.emplace_back();
+			ankerl::nanobench::Bench& b = storage.back();
+			b.title("scenario: integration step (position += velocity * dt), " + backend + " backend")
+				.unit("body").warmup(3).relative(false);
+			r.benches.push_back(&b);
+			const size_t count = 1 << 14;
+			bodies s(count);
+			std::vector<double4> vx(count / 4), vy(count / 4), vz(count / 4);
+			std::vector<double4> cx(count / 4, double4{0, 0, 0, 0}), cy(cx), cz(cx); // Kahan compensation
+			std::mt19937_64 rng(11);
+			std::uniform_real_distribution<double> speed(-3e4, 3e4); // m/s, planetary speeds
+			for (auto* v : {&vx, &vy, &vz})
+				for (double4& e : *v) e = {speed(rng), speed(rng), speed(rng), speed(rng)};
+			const double dt = 60.0;
+			auto step = [&](const double4& v) { return double4{v.x * dt, v.y * dt, v.z * dt, v.w * dt}; };
+			b.batch(count).minEpochIterations(20);
+			r.run(b, "integration step [fixed128, operator+=(double4)]", [&] {
+				for (size_t i = 0; i < count / 4; ++i) {
+					s.x[i] += step(vx[i]);
+					s.y[i] += step(vy[i]);
+					s.z[i] += step(vz[i]);
+				}
+				doNotOptimizeAway(s.x.data());
+			});
+			r.run(b, "integration step [double-double]", [&] {
+				for (size_t i = 0; i < count / 4; ++i) {
+					dd4::add(s.ddx[i], step(vx[i]));
+					dd4::add(s.ddy[i], step(vy[i]));
+					dd4::add(s.ddz[i], step(vz[i]));
+				}
+				doNotOptimizeAway(s.ddx.data());
+			});
+			r.run(b, "integration step [double + Kahan compensation]", [&] {
+				auto kahan = [&](double4& x, double4& c, const double4& v) {
+					using namespace fx128::detail;
+					const vd y = add_d(load(step(v)), load(c)), t = add_d(load(x), y);
+					c = to_double4(sub_d(y, sub_d(t, load(x))));
+					x = to_double4(t);
+				};
+				for (size_t i = 0; i < count / 4; ++i) {
+					kahan(s.dx[i], cx[i], vx[i]);
+					kahan(s.dy[i], cy[i], vy[i]);
+					kahan(s.dz[i], cz[i], vz[i]);
+				}
+				doNotOptimizeAway(s.dx.data());
+			});
+			r.run(b, "integration step [double, baseline]", [&] {
+				for (size_t i = 0; i < count / 4; ++i) {
+					const double4 sx = step(vx[i]), sy = step(vy[i]), sz = step(vz[i]);
+					s.dx[i] = {s.dx[i].x + sx.x, s.dx[i].y + sx.y, s.dx[i].z + sx.z, s.dx[i].w + sx.w};
+					s.dy[i] = {s.dy[i].x + sy.x, s.dy[i].y + sy.y, s.dy[i].z + sy.z, s.dy[i].w + sy.w};
+					s.dz[i] = {s.dz[i].x + sz.x, s.dz[i].y + sz.y, s.dz[i].z + sz.z, s.dz[i].w + sz.w};
+				}
+				doNotOptimizeAway(s.dx.data());
 			});
 		}
 	}

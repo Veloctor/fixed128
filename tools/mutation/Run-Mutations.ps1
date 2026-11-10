@@ -41,7 +41,9 @@ $mutations = @(
 	@('include/fixed128/check.hpp', 1, 'else if (!(v >= lo && v < hi))', 'else if (!(v >= lo && v <= hi))', 'input check: upper limit accepted'),
 	@('include/fixed128/scalar.hpp', 1, 'const uint64_t r = d - borrow;', 'const uint64_t r = d;', 'portable subborrow: borrow-in not subtracted'),
 	@('include/fixed128/scalar.hpp', 1, 'c1 -= c0 > 0;', 'c1 -= 0;', 'scalar fixed128(double): no borrow when negating'),
-	@('include/fixed128/detail/scalar/native.hpp', 1, 'return c > 63 ? 0 : x >> c;', 'return c > 64 ? 0 : x >> (c & 63);', 'scalar backend srlv: shift count 64 not zero')
+	@('include/fixed128/detail/scalar/native.hpp', 1, 'return c > 63 ? 0 : x >> c;', 'return c > 64 ? 0 : x >> (c & 63);', 'scalar backend srlv: shift count 64 not zero'),
+	@('include/fixed128/simd.hpp', 1, 'return to_float4(cvt_d_to_f(load(subtract_to_double(a, b))));', 'return to_float4(cvt_d_to_f(load(subtract_to_double(b, a))));', 'subtract_to_float: operands swapped'),
+	@('include/fixed128/simd.hpp', 1, 'fixed128x4 operator-(const double4& value) const { return *this - fixed128x4{value}; }', 'fixed128x4 operator-(const double4& value) const { return *this + fixed128x4{value}; }', 'fixed128x4 - double4: adds instead')
 )
 
 function Invoke-Checked([scriptblock]$Command) {

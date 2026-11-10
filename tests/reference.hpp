@@ -143,6 +143,41 @@ namespace ref
 		return negative ? -r : r;
 	}
 
+	inline uint32_t bits_of(float f)
+	{
+		uint32_t b;
+		std::memcpy(&b, &f, sizeof b);
+		return b;
+	}
+
+	// Correctly rounded (to nearest, ties to even) float of x * 2^-frac_bits, signed two's complement x,
+	// including float subnormals (results below 2^-126).
+	inline float fixed128_to_float(u128 x, int frac_bits)
+	{
+		const bool negative = x.hi >> 63;
+		const u128 m = negative ? neg(x) : x;
+		if (is_zero(m)) return 0.0f;
+		const int p = msb(m);
+		// Keep the bits from position s up: 24 significant bits, but none below 2^-149 (the float subnormal step).
+		const int s = p - 23 > frac_bits - 149 ? p - 23 : frac_bits - 149;
+		uint64_t top;
+		int e;
+		if (s <= 0) {
+			top = m.lo; // p <= 23: exact
+			e = 0;
+		}
+		else {
+			e = s;
+			top = shr(m, s).lo;
+			const bool half = bit(m, s - 1);
+			const bool sticky = s - 1 > 0 && !is_zero(shl(m, 128 - (s - 1)));
+			if (half && (sticky || (top & 1))) ++top;
+		}
+		// top <= 2^24 and 2^(e - frac_bits) >= 2^-149: the double is exact, and so is its conversion to float.
+		const double r = static_cast<double>(top) * pow2(e - frac_bits);
+		return static_cast<float>(negative ? -r : r);
+	}
+
 	// Signed/unsigned int64 truncation of v (v must be in range).
 	inline uint64_t double_to_int64_trunc(double v)
 	{
@@ -160,5 +195,16 @@ namespace ref
 		const int64_t ia = ord(a), ib = ord(b);
 		return ia > ib ? static_cast<uint64_t>(ia) - static_cast<uint64_t>(ib)
 					   : static_cast<uint64_t>(ib) - static_cast<uint64_t>(ia);
+	}
+
+	// Distance in units in the last place between two finite floats of the same sign (or zero).
+	inline uint64_t ulp_distance(float a, float b)
+	{
+		auto ord = [](float f) {
+			const int64_t i = static_cast<int32_t>(bits_of(f));
+			return i < 0 ? INT32_MIN - i : i;
+		};
+		const int64_t ia = ord(a), ib = ord(b);
+		return static_cast<uint64_t>(ia > ib ? ia - ib : ib - ia);
 	}
 }

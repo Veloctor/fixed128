@@ -33,5 +33,23 @@ namespace candidates
 		{
 			return fx128::ufixed128_to_double<F>(upper, lower);
 		}
+
+		template <int F>
+		static fx128::double4 subtract_to_double(const fx128::fixed128x4<F>& a, const fx128::fixed128x4<F>& b)
+		{
+			return fx128::subtract_to_double(a, b);
+		}
+
+		template <int F>
+		static fx128::float4 subtract_to_float(const fx128::fixed128x4<F>& a, const fx128::fixed128x4<F>& b)
+		{
+			return fx128::subtract_to_float(a, b);
+		}
+
+		template <int F>
+		static fx128::fixed128x4<F> add_double(const fx128::fixed128x4<F>& a, const fx128::double4& b)
+		{
+			return a + b;
+		}
 	};
 }

@@ -2,11 +2,13 @@
 
 ## 运行
 
+性能数字以 Clang 的代码生成为准：Windows 上用 `clang-cl-release` 预设（Linux/macOS 上用 `release`，默认编译器即可，或 `-DCMAKE_CXX_COMPILER=clang++`）。MSVC 的数字只用来确认它没有严重落后。
+
 ```powershell
-cmake --preset release; cmake --build --preset release
-./build/release/benchmarks/fixed128_bench --json before.json        # 默认测 L1/L2/L3 三档
-./build/release/benchmarks/fixed128_bench --sizes l1,l2,l3,mem      # 加上主存档（约 400 MiB 内存）
-./build/release/benchmarks/fixed128_bench --filter "fixed128 ->"    # 只跑名字或标题包含该文本的项
+cmake --preset clang-cl-release; cmake --build --preset clang-cl-release
+./build/clang-cl-release/benchmarks/fixed128_bench --json before.json        # 默认测 L1/L2/L3 三档
+./build/clang-cl-release/benchmarks/fixed128_bench --sizes l1,l2,l3,mem      # 加上主存档（约 400 MiB 内存）
+./build/clang-cl-release/benchmarks/fixed128_bench --filter scenario         # 只跑名字或标题包含该文本的项
 ./tools/bench/Compare-Bench.ps1 before.json after.json              # 对比两次结果
 ```
 
@@ -29,8 +31,8 @@ cmake --preset release; cmake --build --preset release
 
 单条指令的延迟和吞吐可以用 `tools/uops/` 查；整段代码的瓶颈（关键路径、端口争用）要对编译后的循环做静态分析：
 
-1. 构建 `fixed128_kernels` 目标：`cmake --build build/release --target fixed128_kernels`。
-   - MSVC：汇编清单写到 `build/release/benchmarks/kernels.asm`。
+1. 构建 `fixed128_kernels` 目标：`cmake --build build/clang-cl-release --target fixed128_kernels`。
+   - clang-cl 与 MSVC：汇编清单写到 `build/<预设>/benchmarks/kernels.asm`。
    - GCC/Clang：`.s` 文件在 `build/release/benchmarks/CMakeFiles/fixed128_kernels.dir/` 下。
 2. 从清单里找到 `loop_fixed128_to_double` / `loop_double_to_fixed128` 的循环体（从循环标签到回跳指令），粘贴到 [uiCA](https://uica.uops.info)（选微架构，如 ICL、ADL-P），或用 `llvm-mca -mcpu=icelake-client` 分析。
 3. uiCA 给出的每次迭代周期数除以 4，就是每个值的理论吞吐，可以和实测的 `--ghz` 换算结果对照。源码注释里的延迟/吞吐数字（Ice Lake）应当能这样复现。
