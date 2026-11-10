@@ -8,7 +8,8 @@
     killed     some test failed: good, the tests cover this mistake;
     SURVIVED   all tests passed: the tests do not notice this mistake (a coverage gap, or an equivalent mutant);
     no build   the mutated code does not compile (the mutation itself must be fixed).
-  Every mutation must leave the code compiling and change behavior somewhere in the tested domain.
+  Every mutation must leave the code compiling and change behavior somewhere in the tested domain (a mutation that
+  changes nothing observable, e.g. a result the library discards, is an "equivalent mutant" and survives by design).
 
   Needs cmake and ninja on PATH (e.g. a Visual Studio developer shell). Takes several minutes per mutation.
   Only committed code is mutated (the worktree is created from HEAD).
@@ -38,7 +39,7 @@ $mutations = @(
 	@('include/fixed128/convert.hpp', 1, 'set1_i(0x4530000080100000)', 'set1_i(0x4530000080100001)', 'int64 -> double: magic number off by one'),
 	@('include/fixed128/simd.hpp', 1, 'auto retupper = sub_i(add_i(load(upper), load(value.upper)), carry);', 'auto retupper = add_i(add_i(load(upper), load(value.upper)), carry);', 'fixed128x4 +: carry with the wrong sign'),
 	@('include/fixed128/check.hpp', 1, 'else if (!(v >= lo && v < hi))', 'else if (!(v >= lo && v <= hi))', 'input check: upper limit accepted'),
-	@('include/fixed128/scalar.hpp', 1, 'return static_cast<unsigned char>((a < b) | (d < borrow));', 'return static_cast<unsigned char>(a < b);', 'portable subborrow: borrow-in ignored'),
+	@('include/fixed128/scalar.hpp', 1, 'const uint64_t r = d - borrow;', 'const uint64_t r = d;', 'portable subborrow: borrow-in not subtracted'),
 	@('include/fixed128/scalar.hpp', 1, 'c1 -= c0 > 0;', 'c1 -= 0;', 'scalar fixed128(double): no borrow when negating'),
 	@('include/fixed128/detail/scalar/native.hpp', 1, 'return c > 63 ? 0 : x >> c;', 'return c > 64 ? 0 : x >> (c & 63);', 'scalar backend srlv: shift count 64 not zero')
 )
