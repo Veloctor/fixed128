@@ -35,6 +35,7 @@ message(STATUS "fixed128 backend: ${FIXED128_RESOLVED_BACKEND}")
 option(FIXED128_BUILD_TESTS "Build the fixed128 tests" ${FIXED128_IS_TOP_LEVEL})
 option(FIXED128_BUILD_BENCHMARKS "Build the fixed128 benchmarks" ${FIXED128_IS_TOP_LEVEL})
 option(FIXED128_BUILD_EXAMPLES "Build the fixed128 examples" ${FIXED128_IS_TOP_LEVEL})
+option(FIXED128_BUILD_VALIDATION "Build the fixed128 validation experiments (orbit drift)" ${FIXED128_IS_TOP_LEVEL})
 option(FIXED128_INSTALL "Generate the fixed128 install target" ${FIXED128_IS_TOP_LEVEL})
 
 # ---- Library ----
@@ -81,6 +82,10 @@ endif()
 
 if(FIXED128_BUILD_EXAMPLES)
 	add_subdirectory(examples)
+endif()
+
+if(FIXED128_BUILD_VALIDATION)
+	add_subdirectory(validation)
 endif()
 
 # ---- Install / find_package support ----
