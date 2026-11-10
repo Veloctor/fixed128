@@ -109,6 +109,19 @@ namespace
 		{36, 0, 0xedb82735adc905d3ull},
 		{0, 1, 0xe2bafe041f60ef50ull},
 		{0, 0, 0xb60fe3dbc91df283ull}, // recorded from the macro-based headers of 391d796 (AVX2 and scalar agree)
+		// recorded 2026-11-10 from a646eda + input checks (no numeric change); AVX2 and scalar agree
+		{1, 1, 0xe975a0a09c2faf51ull},
+		{52, 1, 0x855860f922abeaebull},
+		{53, 1, 0x4da87a90ae9ecdeaull},
+		{64, 1, 0xa9924bfce7ff800cull},
+		{100, 1, 0xc9ee544595fdac74ull},
+		{127, 1, 0xf2b96770b8ec0132ull},
+		{1, 0, 0xcdfa5be556376df2ull},
+		{52, 0, 0x9e4c2ead3fe83902ull},
+		{53, 0, 0x779bc0ff399149f3ull},
+		{64, 0, 0xa5e3b2b4778975f7ull},
+		{100, 0, 0x9f339e829200ad3full},
+		{127, 0, 0x709fa176678f6c90ull},
 	};
 }
 
@@ -121,8 +134,9 @@ TEST_SUITE("backend determinism")
 		for (const golden& g : kGolden)
 			if (g.frac_bits == F::value && g.round_half_away == FIXED128_ROUND_HALF_AWAY_FROM_ZERO) expected = &g;
 		if (!expected) {
-			std::printf("no recorded hash for this configuration; result hash = 0x%016llx\n", (unsigned long long)got);
-			return;
+			std::printf("no recorded hash for frac bits %d, round half away %d; result hash = 0x%016llx\n", F::value,
+				FIXED128_ROUND_HALF_AWAY_FROM_ZERO, (unsigned long long)got);
+			FAIL("record the hash of this configuration (from the AVX2 backend) in kGolden");
 		}
 		char text[32];
 		std::snprintf(text, sizeof text, "0x%016llx", (unsigned long long)got);

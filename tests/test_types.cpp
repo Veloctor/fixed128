@@ -2,6 +2,7 @@
 #include "mismatch_log.hpp"
 #include "test_helpers.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <type_traits>
 
@@ -40,11 +41,12 @@ TEST_SUITE("scalar types")
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE_TEMPLATE("fixed64 round trip through double", F, FIXED128_TEST_FRAC_BITS)
+	TEST_CASE_TEMPLATE("fixed64 round trip through double", F, FIXED128_TEST_FRAC_BITS_64)
 	{
 		using fixed64_t = fixed64<F::value>;
-		// Values exactly representable both as double and as fixed64.
+		// Values exactly representable both as double and as fixed64 (fixed64 holds magnitudes below 2^(63 - F)).
 		for (double v : {0.0, 1.0, -1.0, 1e6, -1e6}) {
+			if (std::fabs(v) >= ref::pow2(63 - F::value)) continue;
 			const fixed64_t f{v};
 			CHECK(static_cast<double>(f) == v);
 		}
@@ -94,7 +96,9 @@ TEST_SUITE("x4 types")
 
 	TEST_CASE_TEMPLATE("fixed128x4 double conversions match the free functions", F, FIXED128_TEST_FRAC_BITS)
 	{
-		const double4 x{1.25, -3.5, 1e20, -1e-3};
+		// magnitudes about 2^50 to 2^101 units, valid for every scale
+		const double u = ref::pow2(60 - F::value);
+		const double4 x{1.25 * u, -3.5 * u, 1.5 * ref::pow2(100 - F::value), -1e-3 * u};
 		const fixed128x4<F::value> v{x};
 		ulong4 hi, lo;
 		double_to_fixed128_full<F::value>(x, hi, lo);
@@ -104,7 +108,7 @@ TEST_SUITE("x4 types")
 		for (int l = 0; l < 4; ++l) CHECK(v[l].upper == to_lanes(hi)[l]);
 	}
 
-	TEST_CASE_TEMPLATE("fixed64x4 conversions", F, FIXED128_TEST_FRAC_BITS)
+	TEST_CASE_TEMPLATE("fixed64x4 conversions", F, FIXED128_TEST_FRAC_BITS_64)
 	{
 		using fixed64x4_t = fixed64x4<F::value>;
 		const double4 x{1.0, -2.0, F::value >= 1 ? 0.5 : 3.0, 1024.0};
@@ -119,7 +123,7 @@ TEST_SUITE("x4 types")
 		CHECK(to_lanes(static_cast<double4>(from_int)) == lanes_f64{1.0, -2.0, 3.0, 1024.0});
 	}
 
-	TEST_CASE_TEMPLATE("fixed64x4 float conversions", F, FIXED128_TEST_FRAC_BITS)
+	TEST_CASE_TEMPLATE("fixed64x4 float conversions", F, FIXED128_TEST_FRAC_BITS_64)
 	{
 		const float4 x{1.0f, -2.0f, 0.25f, 1024.0f};
 		const fixed64x4<F::value> v{x};

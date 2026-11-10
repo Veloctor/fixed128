@@ -8,7 +8,10 @@ set(FIXED128_TEST_SOURCES
 	main.cpp
 	test_arithmetic.cpp
 	test_backend_determinism.cpp
-	test_fixed128_convert.cpp
+	test_contract.cpp
+	test_input_checks.cpp
+	test_properties.cpp
+	test_reference.cpp
 	test_int64_convert.cpp
 	test_types.cpp)
 
@@ -19,9 +22,12 @@ function(fixed128_add_test_config name round_half_away backend)
 	# Use the library's include directories, but not its configuration definitions and flags.
 	target_include_directories(${target} PRIVATE
 		$<TARGET_PROPERTY:fixed128,INTERFACE_INCLUDE_DIRECTORIES>
-		${PROJECT_SOURCE_DIR}/third_party)
+		${PROJECT_SOURCE_DIR}/third_party
+		${PROJECT_SOURCE_DIR}/experimental)
 	target_compile_definitions(${target} PRIVATE
 		FIXED128_ROUND_HALF_AWAY_FROM_ZERO=${round_half_away}
+		# input checks on in every build type: they must never fire on the (valid) test inputs
+		FIXED128_CHECK_INPUTS=1
 		FIXED128_BACKEND_${backend}=1)
 	if(backend STREQUAL "AVX2")
 		target_compile_options(${target} PRIVATE ${FIXED128_AVX2_FLAG})
@@ -46,3 +52,9 @@ foreach(backend IN LISTS _backends)
 	fixed128_add_test_config(round 1 ${backend})
 	fixed128_add_test_config(trunc 0 ${backend})
 endforeach()
+
+# Accuracy report (not a test: prints statistics), built with the library's configuration.
+add_executable(fixed128_accuracy_report accuracy_report.cpp)
+target_link_libraries(fixed128_accuracy_report PRIVATE fixed128::fixed128)
+target_include_directories(fixed128_accuracy_report PRIVATE ${PROJECT_SOURCE_DIR}/third_party ${PROJECT_SOURCE_DIR}/experimental)
+target_compile_definitions(fixed128_accuracy_report PRIVATE DOCTEST_CONFIG_DISABLE)

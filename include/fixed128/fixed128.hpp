@@ -5,6 +5,7 @@
 // Include this header to get the whole public API (namespace fx128).
 
 #include "config.hpp"
+#include "check.hpp"
 #include "types.hpp"
 #include "convert.hpp"
 #include "scalar.hpp"

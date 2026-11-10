@@ -7,15 +7,28 @@
 #include <array>
 #include <cstdint>
 #include <random>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
-// The scales every scale-dependent test runs with (doctest TEST_CASE_TEMPLATE type list), one program for all of them.
+// The scales every scale-dependent test runs with, one program for all of them. Chosen where the magic numbers and
+// shifts change behavior: 0 (plain int128), 1, 36 (typical), 52 / 53 (fraction as wide as the double mantissa),
+// 64 (fraction fills the lower half), 100 and 127 (magic numbers near 1).
+// FIXED128_TEST_FRAC_BITS: doctest TEST_CASE_TEMPLATE type list; test_frac_bits: the same as a std::tuple.
+// fixed64 holds only 64 bits, so its tests use the scales up to 52.
 template <int N>
 using frac = std::integral_constant<int, N>;
-#define FIXED128_TEST_FRAC_BITS frac<36>, frac<0>
-TYPE_TO_STRING_AS("frac36", frac<36>);
+#define FIXED128_TEST_FRAC_BITS frac<0>, frac<1>, frac<36>, frac<52>, frac<53>, frac<64>, frac<100>, frac<127>
+#define FIXED128_TEST_FRAC_BITS_64 frac<0>, frac<1>, frac<36>, frac<52>
+using test_frac_bits = std::tuple<FIXED128_TEST_FRAC_BITS>;
 TYPE_TO_STRING_AS("frac0", frac<0>);
+TYPE_TO_STRING_AS("frac1", frac<1>);
+TYPE_TO_STRING_AS("frac36", frac<36>);
+TYPE_TO_STRING_AS("frac52", frac<52>);
+TYPE_TO_STRING_AS("frac53", frac<53>);
+TYPE_TO_STRING_AS("frac64", frac<64>);
+TYPE_TO_STRING_AS("frac100", frac<100>);
+TYPE_TO_STRING_AS("frac127", frac<127>);
 
 constexpr ref::rounding kRounding = FIXED128_ROUND_HALF_AWAY_FROM_ZERO ? ref::rounding::half_away_from_zero : ref::rounding::trunc;
 

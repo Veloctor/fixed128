@@ -1,6 +1,8 @@
 #pragma once
+#include "check.hpp"
 #include "config.hpp"
 #include "detail/native.hpp"
+#include "detail/pow2.hpp"
 #include "types.hpp"
 
 #include <cstdint>
@@ -17,15 +19,6 @@ namespace fx128
 {
 	namespace detail
 	{
-		// Exact 2^e as a compile-time constant (same value as std::pow(2.0, e), including under/overflow).
-		constexpr double pow2(int e)
-		{
-			double r = 1.0;
-			for (; e > 0; --e) r *= 2.0;
-			for (; e < 0; ++e) r *= 0.5;
-			return r;
-		}
-
 		// Magic numbers for the double<>fixed128 conversions, depending on the number of fractional bits.
 		template<int FracBits> constexpr double majik_d_hm = pow2(100 - FracBits) + pow2(132 - FracBits);
 		template<int FracBits> constexpr double majik_d_lo = pow2(52 - FracBits);
@@ -83,6 +76,7 @@ namespace fx128
 	inline ulong4 double_to_uint64_fast(const double4& in) //9 instructions
 	{
 		using namespace detail;
+		FIXED128_CHECK_INPUT("double_to_uint64_fast", in, 0.0, pow2(64));
 		//constants
 		const vi mat_mask = set1_i(0x0FFFFFFFFFFFFF);	//0_00000000000_1111111111111111111111111111111111111111111111111111
 		const vi hidden_1 = set1_i(0x10000000000000);	//0_00000000001_0000000000000000000000000000000000000000000000000000
@@ -105,6 +99,7 @@ namespace fx128
 	inline long4 double_to_int64_fast(const double4& in) //13 instructions
 	{
 		using namespace detail;
+		FIXED128_CHECK_INPUT("double_to_int64_fast", in, -pow2(63), pow2(63));
 		//constants
 		const vi mat_mask = set1_i(0x0FFFFFFFFFFFFF);	//0_00000000000_1111111111111111111111111111111111111111111111111111
 		const vi hidden_1 = set1_i(0x10000000000000);	//0_00000000001_0000000000000000000000000000000000000000000000000000
@@ -197,6 +192,7 @@ namespace fx128
 	inline void double_to_ufixed128_full(const double4& in, ulong4& outUpper, ulong4& outLower)
 	{
 		using namespace detail;
+		FIXED128_CHECK_INPUT("double_to_ufixed128_full", in, 0.0, pow2(128 - FracBits));
 		//constants
 		const vi mat_mask = set1_i(0x0FFFFFFFFFFFFF);	//0_00000000000_1111111111111111111111111111111111111111111111111111
 		const vi hidden_1 = set1_i(0x10000000000000);	//0_00000000001_0000000000000000000000000000000000000000000000000000//you can reduce this constant by add 1 to mat_mask, inc more 1/3 clock throughput
@@ -239,6 +235,7 @@ namespace fx128
 	inline void double_to_fixed128_full(const double4& in, ulong4& outUpper, ulong4& outLower)
 	{
 		using namespace detail;
+		FIXED128_CHECK_INPUT("double_to_fixed128_full", in, -pow2(127 - FracBits), pow2(127 - FracBits));
 		//constants
 		const vi mat_mask = set1_i(0x0FFFFFFFFFFFFF);	//0_00000000000_1111111111111111111111111111111111111111111111111111
 		const vi hidden_1 = set1_i(0x10000000000000);	//0_00000000001_0000000000000000000000000000000000000000000000000000

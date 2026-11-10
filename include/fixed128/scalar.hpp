@@ -1,5 +1,7 @@
 #pragma once
+#include "check.hpp"
 #include "config.hpp"
+#include "detail/pow2.hpp"
 
 #include <climits>
 #include <cmath>
@@ -78,6 +80,7 @@ namespace fx128
 
 		explicit fixed64(double fp)
 		{
+			FIXED128_CHECK_INPUT("fixed64(double)", fp, -detail::pow2(63 - FracBits), detail::pow2(63 - FracBits));
 			sbits = static_cast<int64_t>(fp * std::pow(2.0, FracBits));
 		}
 
@@ -130,6 +133,7 @@ namespace fx128
 		// truncates towards zero
 		explicit fixed128(double fp)
 		{
+			FIXED128_CHECK_INPUT("fixed128(double)", fp, -detail::pow2(127 - FracBits), detail::pow2(127 - FracBits));
 			fp *= std::pow(2.0, FracBits);
 			double abs = std::abs(fp);
 			double div = abs * (1.0 / ULongMaxValueSD);
@@ -195,6 +199,7 @@ namespace fx128
 
 		fixed128& operator+=(double value)
 		{
+			FIXED128_CHECK_INPUT("fixed128::operator+=(double)", value, -detail::pow2(127 - FracBits), detail::pow2(127 - FracBits));
 			if (value < 0.0) {
 				value = std::abs(value) * std::pow(2.0, FracBits); //==bit_cast<double>(bit_cast<uint64_t>(value) & LLONG_MIN)
 				double div = value * (1.0 / ULongMaxValueSD);

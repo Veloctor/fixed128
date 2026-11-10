@@ -18,6 +18,19 @@
 #define FIXED128_ROUND_HALF_AWAY_FROM_ZERO 1
 #endif
 
+// Input checks of the conversions from double (NaN, infinities, values outside the representable range).
+// Such inputs give undefined results; the checks only report them, through fx128::input_error_handler (check.hpp).
+//  1: check (default in Debug builds, i.e. when NDEBUG is not defined). Costs a little time per conversion.
+//  0: no check, no code at all (default in Release builds).
+// Like assert, it is meant to differ between Debug and Release builds of a program, not between its translation units.
+#ifndef FIXED128_CHECK_INPUTS
+#ifdef NDEBUG
+#define FIXED128_CHECK_INPUTS 0
+#else
+#define FIXED128_CHECK_INPUTS 1
+#endif
+#endif
+
 // Backend of the x4 types and the conversions. Every backend gives bit-identical results per lane.
 //  FIXED128_BACKEND_AVX2=1:   AVX2 intrinsics; the whole program must be compiled with /arch:AVX2 or -mavx2.
 //  FIXED128_BACKEND_SCALAR=1: portable C++, 4 scalar lanes (written so that compilers can auto-vectorize it).
