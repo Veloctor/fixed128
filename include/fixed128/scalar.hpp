@@ -23,7 +23,7 @@
 #endif
 #endif
 
-// Scalar fixed-point types: fixed64 and fixed128.
+// Scalar fixed-point types: fixed64<FracBits> and fixed128<FracBits>.
 
 namespace fx128
 {
@@ -65,8 +65,11 @@ namespace fx128
 
 	constexpr double ULongMaxValueSD = static_cast<double>(ULLONG_MAX); // == 2^64
 
+	template<int FracBits>
 	struct fixed64
 	{
+		static constexpr int frac_bits = FracBits;
+
 		union
 		{
 			int64_t sbits;
@@ -75,12 +78,12 @@ namespace fx128
 
 		explicit fixed64(double fp)
 		{
-			sbits = static_cast<int64_t>(fp * std::pow(2.0, FIXED128_FRAC_BITS));
+			sbits = static_cast<int64_t>(fp * std::pow(2.0, FracBits));
 		}
 
 		explicit operator double() const
 		{
-			return sbits * std::pow(2.0, -FIXED128_FRAC_BITS);
+			return sbits * std::pow(2.0, -FracBits);
 		}
 
 		explicit operator int64_t() const
@@ -112,17 +115,22 @@ namespace fx128
 	};
 
 	// Largest / smallest representable fixed64, set bitwise (converting from double would overflow).
-	const fixed64 fixed64_maxvalue = [] { fixed64 f{0.0}; f.sbits = LLONG_MAX; return f; }();
-	const fixed64 fixed64_minvalue = [] { fixed64 f{0.0}; f.sbits = LLONG_MIN; return f; }();
+	template<int FracBits>
+	const fixed64<FracBits> fixed64_maxvalue = [] { fixed64<FracBits> f{0.0}; f.sbits = LLONG_MAX; return f; }();
+	template<int FracBits>
+	const fixed64<FracBits> fixed64_minvalue = [] { fixed64<FracBits> f{0.0}; f.sbits = LLONG_MIN; return f; }();
 
+	template<int FracBits>
 	struct fixed128
 	{
+		static constexpr int frac_bits = FracBits;
+
 		uint64_t upper, lower;
 
 		// truncates towards zero
 		explicit fixed128(double fp)
 		{
-			fp *= std::pow(2.0, FIXED128_FRAC_BITS);
+			fp *= std::pow(2.0, FracBits);
 			double abs = std::abs(fp);
 			double div = abs * (1.0 / ULongMaxValueSD);
 			double c1trunc = std::trunc(div); //maybe trunc better?
@@ -144,7 +152,7 @@ namespace fx128
 			lower = _lower;
 		}
 
-		explicit fixed128(fixed64 _lower)
+		explicit fixed128(fixed64<FracBits> _lower)
 		{
 			upper = 0;
 			lower = _lower.ubits;
@@ -169,9 +177,9 @@ namespace fx128
 				c1 = 0 - c1;
 				c1 -= c0 > 0;
 				c0 = 0 - c0;
-				return -std::fma(c1, ULongMaxValueSD, c0) * std::pow(2.0, -FIXED128_FRAC_BITS);
+				return -std::fma(c1, ULongMaxValueSD, c0) * std::pow(2.0, -FracBits);
 			}
-			return std::fma(c1, ULongMaxValueSD, c0) * std::pow(2.0, -FIXED128_FRAC_BITS);
+			return std::fma(c1, ULongMaxValueSD, c0) * std::pow(2.0, -FracBits);
 		}
 
 		fixed128& operator+=(const fixed128& value)
@@ -179,7 +187,7 @@ namespace fx128
 			return *this = *this + value;
 		}
 
-		fixed128& operator+=(fixed64 value)
+		fixed128& operator+=(fixed64<FracBits> value)
 		{
 			upper += detail::addcarry(0, lower, value.ubits, &lower);
 			return *this;
@@ -188,7 +196,7 @@ namespace fx128
 		fixed128& operator+=(double value)
 		{
 			if (value < 0.0) {
-				value = std::abs(value) * std::pow(2.0, FIXED128_FRAC_BITS); //==bit_cast<double>(bit_cast<uint64_t>(value) & LLONG_MIN)
+				value = std::abs(value) * std::pow(2.0, FracBits); //==bit_cast<double>(bit_cast<uint64_t>(value) & LLONG_MIN)
 				double div = value * (1.0 / ULongMaxValueSD);
 				double upperTrunc = std::floor(div); //maybe trunc better?
 				uint64_t targetUpper = static_cast<uint64_t>(div);
@@ -199,7 +207,7 @@ namespace fx128
 				lower -= targetLower;
 			}
 			else if (value > 0.0) {
-				value *= std::pow(2.0, FIXED128_FRAC_BITS);
+				value *= std::pow(2.0, FracBits);
 				double div = value * (1.0 / ULongMaxValueSD);
 				double upperTrunc = std::floor(div); //maybe trunc better?
 				uint64_t targetUpper = static_cast<uint64_t>(div);
@@ -231,11 +239,10 @@ namespace fx128
 			detail::subborrow(borrow, upper, b.upper, &hi);
 			return fixed128{static_cast<int64_t>(hi), static_cast<int64_t>(lo)};
 		}
-
-		friend std::ostream& operator<<(std::ostream& os, const fixed128& i128);
 	};
 
-	inline std::ostream& operator<<(std::ostream& os, const fixed128& i128)
+	template<int FracBits>
+	std::ostream& operator<<(std::ostream& os, const fixed128<FracBits>& i128)
 	{
 		return os << std::hex << i128.upper << std::setw(16) << std::setfill('0') << i128.lower;
 	}

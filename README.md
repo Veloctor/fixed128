@@ -23,10 +23,10 @@ Supported operations are deliberately few: addition, subtraction, conversion fro
 #include <fixed128/fixed128.hpp>
 using namespace fx128;
 
-const fixed128x4 base{9.46e21};                                  // ~1 million light years, in meters
-const fixed128x4 p = base + fixed128x4{double4{1.0, 2.0, 3.0, 4.0}};
-const fixed128x4 q = base + fixed128x4{double4{0.5, 0.5, 0.5, 0.5}};
-const double4 delta = static_cast<double4>(p - q);               // exact subtraction, then convert
+const fixed128x4<36> base{9.46e21};                          // 36 fractional bits; ~1 million light years, in meters
+const fixed128x4<36> p = base + fixed128x4<36>{double4{1.0, 2.0, 3.0, 4.0}};
+const fixed128x4<36> q = base + fixed128x4<36>{double4{0.5, 0.5, 0.5, 0.5}};
+const double4 delta = static_cast<double4>(p - q);           // exact subtraction, then convert
 ```
 
 See [`examples/`](examples/) for complete programs.
@@ -67,14 +67,23 @@ When fixed128 is not the top-level project, its tests, benchmarks and examples a
 
 ## Configuration
 
+**Number of fractional bits.** It is a template parameter without default, not a configuration macro: a value of
+`fixed128<FracBits>` equals its integer bits / 2^`FracBits`, and `FracBits` 0 makes it a plain int128.
+Every use names the scale, so a value can never silently be interpreted at another one.
+One program can use several scales; values of different scales are distinct types and do not convert into each other.
+
+```cpp
+fx128::fixed128x4<20> coarse{1.5};   // 20 fractional bits
+fx128::fixed128x4<36> fine{1.5};     // 36 fractional bits
+```
+
 | Macro / CMake cache variable | Default | Meaning |
 |---|---|---|
-| `FIXED128_FRAC_BITS` | `36` | Number of fractional bits: value = integer bits / 2^`FIXED128_FRAC_BITS`. `0` makes the types plain int128. Must be a compile-time constant. |
 | `FIXED128_ROUND_HALF_AWAY_FROM_ZERO` | `1` / `ON` | `double → fixed128` SIMD conversion rounds half away from zero; `0` / `OFF` truncates. Round-half-to-even is not supported. |
 | `FIXED128_BACKEND_AVX2=1` / `FIXED128_BACKEND_SCALAR=1`; CMake: `FIXED128_BACKEND` = `AUTO` / `AVX2` / `SCALAR` | automatic | See [Backends](#backends). |
 
 Every translation unit of a program must see the same values (otherwise the program violates the ODR, silently).
-With CMake, set the cache variables, e.g. `-DFIXED128_FRAC_BITS=32`; they are propagated to every consumer of the target.
+With CMake, set the cache variables, e.g. `-DFIXED128_ROUND_HALF_AWAY_FROM_ZERO=OFF`; they are propagated to every consumer of the target.
 
 ## Backends
 
@@ -92,11 +101,12 @@ Everything is in namespace `fx128`. The 4-lane value types are plain structs wit
 
 | Type | Contents |
 |---|---|
-| `fixed64` | Scalar signed 64-bit fixed point. |
-| `fixed128` | Scalar signed 128-bit fixed point (`upper`, `lower`). `+ - += -=`, conversion from/to `double` (from `double`: truncates). |
-| `fixed64x4` | 4 lanes of `fixed64` (`bits`, a `long4`). |
-| `fixed128x4` | 4 lanes of `fixed128`, structure of arrays (`upper`, `lower`, both `ulong4`). `+ - += -=`, `operator[]`, conversion from/to `double4`. |
+| `fixed64<FracBits>` | Scalar signed 64-bit fixed point. `fixed64_maxvalue<FracBits>` / `fixed64_minvalue<FracBits>` are its extremes. |
+| `fixed128<FracBits>` | Scalar signed 128-bit fixed point (`upper`, `lower`). `+ - += -=`, conversion from/to `double` (from `double`: truncates). |
+| `fixed64x4<FracBits>` | 4 lanes of `fixed64` (`bits`, a `long4`). |
+| `fixed128x4<FracBits>` | 4 lanes of `fixed128`, structure of arrays (`upper`, `lower`, both `ulong4`). `+ - += -=`, `operator[]`, conversion from/to `double4`. |
 
+Each type has `static constexpr int frac_bits`.
 The constructors taking 4 scalars take them in lane order: the **first argument is lane 0** (`x`).
 
 With the AVX2 backend, `fx128::avx2::to_m256d` / `to_m256i` / `to_double4` / `to_long4` / `to_ulong4` convert between these types and `__m256d` / `__m256i` for code that uses intrinsics directly (see [`examples/xyz_lane_packing.cpp`](examples/xyz_lane_packing.cpp)).
@@ -109,6 +119,8 @@ Free functions in [`convert.hpp`](include/fixed128/convert.hpp) (a fixed128 lane
 | `fixed128_to_double`, `ufixed128_to_double` | full (u)fixed128 range | ≤ 1 ULP |
 | `double_to_int64_fast`, `double_to_uint64_fast` | full (u)int64 range | exact, truncates |
 | `int64_to_double_fast_precise`, `uint64_to_double_fast_precise` | full (u)int64 range | correctly rounded |
+
+The four (u)fixed128 functions are templates over the scale, e.g. `double_to_fixed128_full<20>(v, upper, lower)`; the scale must always be given.
 
 `-0.0` converts to `0` (there is no negative zero in fixed point).
 NaN, ±Inf and inputs outside the valid range give undefined results: the conversions never pay a runtime cost to check them.
@@ -124,7 +136,7 @@ ctest --preset release
 ```
 
 Third-party code (doctest, nanobench) is vendored in [`third_party/`](third_party/), so no network access is needed.
-The tests compare everything against an exact, pure-integer reference implementation ([`tests/reference.hpp`](tests/reference.hpp)) in three configurations (`FIXED128_FRAC_BITS` 36 / 0, rounding on / off), each for the scalar backend and, on x86-64, also for AVX2; a determinism test checks that both backends give bit-identical results.
+The tests compare everything against an exact, pure-integer reference implementation ([`tests/reference.hpp`](tests/reference.hpp)) in one executable per rounding mode (on / off), each covering the scales 36 and 0, built for the scalar backend and, on x86-64, also for AVX2; a determinism test checks that both backends give bit-identical results.
 
 Benchmarks (always use a Release build): `build/release/benchmarks/fixed128_bench [name-substring]`.
 They report throughput over L1-resident arrays and the latency of a `double → fixed128 → double` dependency chain.

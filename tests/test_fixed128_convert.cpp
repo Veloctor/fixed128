@@ -8,7 +8,7 @@ namespace
 {
 	// Runs the SIMD double -> (u)fixed128 conversion on 4 inputs at a time and compares with the reference.
 	template <typename Convert>
-	void check_double_to_fixed128(const std::vector<double>& inputs, bool is_signed, Convert convert, mismatch_log& log)
+	void check_double_to_fixed128(const std::vector<double>& inputs, bool is_signed, int frac_bits, Convert convert, mismatch_log& log)
 	{
 		for (size_t i = 0; i < inputs.size(); i += 4) {
 			lanes_f64 in{};
@@ -17,7 +17,7 @@ namespace
 			convert(from_lanes(in), hi, lo);
 			const lanes_i64 h = to_lanes(hi), o = to_lanes(lo);
 			for (size_t l = 0; l < 4 && i + l < inputs.size(); ++l) {
-				const ref::u128 expected = ref::double_to_fixed128(in[l], kFracBits, kRounding);
+				const ref::u128 expected = ref::double_to_fixed128(in[l], frac_bits, kRounding);
 				if (h[l] != expected.hi || o[l] != expected.lo)
 					log.add("%s: in=%a got=%016llx_%016llx expected=%016llx_%016llx", is_signed ? "signed" : "unsigned", in[l],
 						(unsigned long long)h[l], (unsigned long long)o[l],
@@ -27,7 +27,7 @@ namespace
 	}
 
 	template <typename Convert>
-	void check_fixed128_to_double(const std::vector<ref::u128>& inputs, bool is_signed, uint64_t max_ulp, Convert convert, mismatch_log& log)
+	void check_fixed128_to_double(const std::vector<ref::u128>& inputs, bool is_signed, int frac_bits, uint64_t max_ulp, Convert convert, mismatch_log& log)
 	{
 		for (size_t i = 0; i < inputs.size(); i += 4) {
 			lanes_i64 h{}, o{};
@@ -37,7 +37,7 @@ namespace
 			}
 			const lanes_f64 got = to_lanes(convert(from_lanes(h), from_lanes(o)));
 			for (size_t l = 0; l < 4 && i + l < inputs.size(); ++l) {
-				const double expected = ref::fixed128_to_double(inputs[i + l], kFracBits, is_signed);
+				const double expected = ref::fixed128_to_double(inputs[i + l], frac_bits, is_signed);
 				if (ref::ulp_distance(got[l], expected) > max_ulp)
 					log.add("%s: in=%016llx_%016llx got=%a expected=%a (%llu ulp)", is_signed ? "signed" : "unsigned",
 						(unsigned long long)h[l], (unsigned long long)o[l], got[l], expected,
@@ -46,29 +46,29 @@ namespace
 		}
 	}
 
-	std::vector<double> random_doubles(int count, int max_log2, bool is_signed)
+	std::vector<double> random_doubles(int count, int max_log2, bool is_signed, int frac_bits)
 	{
 		std::mt19937_64 rng(kSeed);
 		std::vector<double> v;
-		for (int i = 0; i < count; ++i) v.push_back(random_scaled_double(rng, -8, max_log2, is_signed));
+		for (int i = 0; i < count; ++i) v.push_back(random_scaled_double(rng, -8, max_log2, is_signed, frac_bits));
 		return v;
 	}
 
-	std::vector<double> halfway_doubles(int count, bool is_signed)
+	std::vector<double> halfway_doubles(int count, bool is_signed, int frac_bits)
 	{
 		std::mt19937_64 rng(kSeed + 1);
 		std::vector<double> v;
-		for (int i = 0; i < count; ++i) v.push_back(random_halfway_double(rng, is_signed));
+		for (int i = 0; i < count; ++i) v.push_back(random_halfway_double(rng, is_signed, frac_bits));
 		return v;
 	}
 
 	// The neighbors one ULP below and above half-way points: the inputs most sensitive to rounding mistakes.
-	std::vector<double> around_halfway_doubles(int count, bool is_signed)
+	std::vector<double> around_halfway_doubles(int count, bool is_signed, int frac_bits)
 	{
 		std::mt19937_64 rng(kSeed + 3);
 		std::vector<double> v;
 		for (int i = 0; i < count; i += 2) {
-			const uint64_t bits = ref::bits_of(random_halfway_double(rng, is_signed));
+			const uint64_t bits = ref::bits_of(random_halfway_double(rng, is_signed, frac_bits));
 			v.push_back(ref::double_of(bits - 1));
 			v.push_back(ref::double_of(bits + 1));
 		}
@@ -105,59 +105,59 @@ namespace
 
 TEST_SUITE("double -> fixed128")
 {
-	TEST_CASE("signed: edge values")
+	TEST_CASE_TEMPLATE("signed: edge values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(edge_scaled_values(true), true, double_to_fixed128_full, log);
+		check_double_to_fixed128(edge_scaled_values(true, F::value), true, F::value, double_to_fixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("signed: random values over the full range")
+	TEST_CASE_TEMPLATE("signed: random values over the full range", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(random_doubles(kRandomCount, 127, true), true, double_to_fixed128_full, log);
+		check_double_to_fixed128(random_doubles(kRandomCount, 127, true, F::value), true, F::value, double_to_fixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("signed: values exactly half-way between two fixed-point values")
+	TEST_CASE_TEMPLATE("signed: values exactly half-way between two fixed-point values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(halfway_doubles(kRandomCount, true), true, double_to_fixed128_full, log);
+		check_double_to_fixed128(halfway_doubles(kRandomCount, true, F::value), true, F::value, double_to_fixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("signed: values one ULP around half-way points")
+	TEST_CASE_TEMPLATE("signed: values one ULP around half-way points", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(around_halfway_doubles(kRandomCount, true), true, double_to_fixed128_full, log);
+		check_double_to_fixed128(around_halfway_doubles(kRandomCount, true, F::value), true, F::value, double_to_fixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: edge values")
+	TEST_CASE_TEMPLATE("unsigned: edge values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(edge_scaled_values(false), false, double_to_ufixed128_full, log);
+		check_double_to_fixed128(edge_scaled_values(false, F::value), false, F::value, double_to_ufixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: random values over the full range")
+	TEST_CASE_TEMPLATE("unsigned: random values over the full range", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(random_doubles(kRandomCount, 128, false), false, double_to_ufixed128_full, log);
+		check_double_to_fixed128(random_doubles(kRandomCount, 128, false, F::value), false, F::value, double_to_ufixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: values exactly half-way between two fixed-point values")
+	TEST_CASE_TEMPLATE("unsigned: values exactly half-way between two fixed-point values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(halfway_doubles(kRandomCount, false), false, double_to_ufixed128_full, log);
+		check_double_to_fixed128(halfway_doubles(kRandomCount, false, F::value), false, F::value, double_to_ufixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: values one ULP around half-way points")
+	TEST_CASE_TEMPLATE("unsigned: values one ULP around half-way points", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_double_to_fixed128(around_halfway_doubles(kRandomCount, false), false, double_to_ufixed128_full, log);
+		check_double_to_fixed128(around_halfway_doubles(kRandomCount, false, F::value), false, F::value, double_to_ufixed128_full<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 }
@@ -167,31 +167,31 @@ TEST_SUITE("fixed128 -> double")
 	// Documented accuracy: at most 1 ULP from the correctly rounded result.
 	constexpr uint64_t kMaxUlp = 1;
 
-	TEST_CASE("signed: edge values")
+	TEST_CASE_TEMPLATE("signed: edge values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_fixed128_to_double(edge_fixed128(true), true, kMaxUlp, fixed128_to_double, log);
+		check_fixed128_to_double(edge_fixed128(true), true, F::value, kMaxUlp, fixed128_to_double<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("signed: random values")
+	TEST_CASE_TEMPLATE("signed: random values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_fixed128_to_double(random_fixed128(kRandomCount, true), true, kMaxUlp, fixed128_to_double, log);
+		check_fixed128_to_double(random_fixed128(kRandomCount, true), true, F::value, kMaxUlp, fixed128_to_double<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: edge values")
+	TEST_CASE_TEMPLATE("unsigned: edge values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_fixed128_to_double(edge_fixed128(false), false, kMaxUlp, ufixed128_to_double, log);
+		check_fixed128_to_double(edge_fixed128(false), false, F::value, kMaxUlp, ufixed128_to_double<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("unsigned: random values")
+	TEST_CASE_TEMPLATE("unsigned: random values", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
-		check_fixed128_to_double(random_fixed128(kRandomCount, false), false, kMaxUlp, ufixed128_to_double, log);
+		check_fixed128_to_double(random_fixed128(kRandomCount, false), false, F::value, kMaxUlp, ufixed128_to_double<F::value>, log);
 		CHECK_NO_MISMATCH(log);
 	}
 }

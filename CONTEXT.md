@@ -15,10 +15,10 @@ _Avoid_: Int128（仅作 Frac bits = 0 的特例时使用）
 _Avoid_: uint128
 
 **Fixed64**:
-有符号 64 位定点数，与 Fixed128 共用同一 Frac bits。
+有符号 64 位定点数，与同一 Frac bits 的 Fixed128 搭配使用。
 
 **Frac bits**:
-小数位数，整个程序内为同一个编译期常量。
+小数位数，是类型和转换函数的模板参数（`fixed128<FracBits>` 等），没有默认值，每处使用都要写明；同一程序可以同时用多种。不同 Frac bits 的值是不同类型，不能互相转换。
 _Avoid_: 精度、scale
 
 **Upper / Lower**:

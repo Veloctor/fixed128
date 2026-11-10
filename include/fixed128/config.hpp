@@ -2,15 +2,12 @@
 
 // Compile-time configuration of the fixed128 library.
 // Every translation unit in a program must see the same values; with CMake, set them through the
-// FIXED128_FRAC_BITS / FIXED128_ROUND_HALF_AWAY_FROM_ZERO / FIXED128_BACKEND cache variables, which are propagated to
-// all consumers of the fixed128::fixed128 target.
+// FIXED128_ROUND_HALF_AWAY_FROM_ZERO / FIXED128_BACKEND cache variables, which are propagated to all consumers of the
+// fixed128::fixed128 target.
 
-// Number of fractional bits: a fixed-point value equals its integer bits / 2^FIXED128_FRAC_BITS.
-// 0 turns the conversions into plain int128 conversions.
-// Must be a compile-time constant; any value is zero-overhead, not limited to [0,128].
-#ifndef FIXED128_FRAC_BITS
-#define FIXED128_FRAC_BITS 36
-#endif
+// The number of fractional bits is not configured here: it is a template parameter without default of the types and
+// conversions (fixed128<FracBits> etc.), named at every use. A fixed-point value equals its integer bits / 2^FracBits;
+// FracBits 0 turns them into plain int128. Any value is zero-overhead, not limited to [0,128].
 
 // Rounding of double -> fixed128 SIMD conversions:
 //  1: round half away from zero (chinese: 四舍五入), e.g. r(1.49) = 1, r(1.5) = 2, r(2.5) = 3, r(-4.5) = -5.

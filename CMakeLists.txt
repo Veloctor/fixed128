@@ -15,7 +15,6 @@ else()
 	set(FIXED128_IS_TOP_LEVEL OFF)
 endif()
 
-set(FIXED128_FRAC_BITS 36 CACHE STRING "Number of fractional bits of the fixed-point types")
 option(FIXED128_ROUND_HALF_AWAY_FROM_ZERO "double -> fixed128 rounds half away from zero (OFF: truncate)" ON)
 # Backend (see config.hpp). AUTO: AVX2 on x86-64, scalar elsewhere. Resolved here, so that every consumer sees the
 # same explicit choice.
@@ -55,7 +54,6 @@ else()
 	set(_fixed128_round 0)
 endif()
 target_compile_definitions(fixed128 INTERFACE
-	FIXED128_FRAC_BITS=${FIXED128_FRAC_BITS}
 	FIXED128_ROUND_HALF_AWAY_FROM_ZERO=${_fixed128_round}
 	FIXED128_BACKEND_${FIXED128_RESOLVED_BACKEND}=1)
 

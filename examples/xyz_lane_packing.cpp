@@ -11,11 +11,15 @@
 
 using namespace fx128;
 
+// Number of fractional bits: always named explicitly, there is no default scale.
+constexpr int kFracBits = 36;
+
 #if FIXED128_BACKEND_AVX2
-inline fixed128x4 gather_3xfix128x4_last_elem_into1(const fixed128x4& in1, const fixed128x4& in2, const fixed128x4& in3)
+template <int F>
+inline fixed128x4<F> gather_3xfix128x4_last_elem_into1(const fixed128x4<F>& in1, const fixed128x4<F>& in2, const fixed128x4<F>& in3)
 {
 	using avx2::to_m256i;
-	fixed128x4 out{};
+	fixed128x4<F> out{};
 	//operations:
 	//out.lower[0] = in1.lower[3];
 	//out.lower[1] = in2.lower[3];
@@ -36,7 +40,8 @@ inline fixed128x4 gather_3xfix128x4_last_elem_into1(const fixed128x4& in1, const
 	return out;
 }
 
-inline void distribute_in4xyz_to_3xfix128x4_last_elem(fixed128x4& inout1, fixed128x4& inout2, fixed128x4& inout3, const fixed128x4& in4)
+template <int F>
+inline void distribute_in4xyz_to_3xfix128x4_last_elem(fixed128x4<F>& inout1, fixed128x4<F>& inout2, fixed128x4<F>& inout3, const fixed128x4<F>& in4)
 {
 	using avx2::to_m256i;
 	using avx2::to_ulong4;
@@ -62,15 +67,17 @@ inline void distribute_in4xyz_to_3xfix128x4_last_elem(fixed128x4& inout1, fixed1
 	inout3.upper = to_ulong4(_mm256_blend_epi32(to_m256i(inout3.upper), f, 0b11000000));
 }
 #else
-inline fixed128x4 gather_3xfix128x4_last_elem_into1(const fixed128x4& in1, const fixed128x4& in2, const fixed128x4& in3)
+template <int F>
+inline fixed128x4<F> gather_3xfix128x4_last_elem_into1(const fixed128x4<F>& in1, const fixed128x4<F>& in2, const fixed128x4<F>& in3)
 {
-	fixed128x4 out{};
+	fixed128x4<F> out{};
 	out.lower = {in1.lower.w, in2.lower.w, in3.lower.w, 0};
 	out.upper = {in1.upper.w, in2.upper.w, in3.upper.w, 0};
 	return out;
 }
 
-inline void distribute_in4xyz_to_3xfix128x4_last_elem(fixed128x4& inout1, fixed128x4& inout2, fixed128x4& inout3, const fixed128x4& in4)
+template <int F>
+inline void distribute_in4xyz_to_3xfix128x4_last_elem(fixed128x4<F>& inout1, fixed128x4<F>& inout2, fixed128x4<F>& inout3, const fixed128x4<F>& in4)
 {
 	inout1.lower.w = in4.lower.x;
 	inout2.lower.w = in4.lower.y;
@@ -84,15 +91,15 @@ inline void distribute_in4xyz_to_3xfix128x4_last_elem(fixed128x4& inout1, fixed1
 int main()
 {
 	// x, y, z component registers; lane 3 holds the spare vector (10, 20, 30).
-	fixed128x4 xs{fixed128{0, 1}, fixed128{0, 1}, fixed128{0, 1}, fixed128{0, 10}};
-	fixed128x4 ys{fixed128{0, 2}, fixed128{0, 2}, fixed128{0, 2}, fixed128{0, 20}};
-	fixed128x4 zs{fixed128{0, 3}, fixed128{0, 3}, fixed128{0, 3}, fixed128{0, 30}};
+	fixed128x4<kFracBits> xs{fixed128<kFracBits>{0, 1}, fixed128<kFracBits>{0, 1}, fixed128<kFracBits>{0, 1}, fixed128<kFracBits>{0, 10}};
+	fixed128x4<kFracBits> ys{fixed128<kFracBits>{0, 2}, fixed128<kFracBits>{0, 2}, fixed128<kFracBits>{0, 2}, fixed128<kFracBits>{0, 20}};
+	fixed128x4<kFracBits> zs{fixed128<kFracBits>{0, 3}, fixed128<kFracBits>{0, 3}, fixed128<kFracBits>{0, 3}, fixed128<kFracBits>{0, 30}};
 
-	const fixed128x4 xyz = gather_3xfix128x4_last_elem_into1(xs, ys, zs);
+	const fixed128x4<kFracBits> xyz = gather_3xfix128x4_last_elem_into1(xs, ys, zs);
 	std::printf("gathered: x=%llu y=%llu z=%llu\n", (unsigned long long)xyz[0].lower, (unsigned long long)xyz[1].lower,
 		(unsigned long long)xyz[2].lower);
 
-	const fixed128x4 moved{fixed128{0, 11}, fixed128{0, 22}, fixed128{0, 33}, fixed128{0, 0}};
+	const fixed128x4<kFracBits> moved{fixed128<kFracBits>{0, 11}, fixed128<kFracBits>{0, 22}, fixed128<kFracBits>{0, 33}, fixed128<kFracBits>{0, 0}};
 	distribute_in4xyz_to_3xfix128x4_last_elem(xs, ys, zs, moved);
 	std::printf("distributed: x=%llu y=%llu z=%llu\n", (unsigned long long)xs[3].lower, (unsigned long long)ys[3].lower,
 		(unsigned long long)zs[3].lower);

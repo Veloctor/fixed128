@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 用户文档、接入方式、API 一览、已知问题：`README.md`
 - 项目术语（Fixed128、Frac bits、Lane、x4、Backend、`_limited`/`_fast`/`_full`、Reference implementation）：`CONTEXT.md`。命名和讨论都用这里的词。
-- 已做的架构决策及原因：`docs/adr/`。动到 backend 结构（ADR 0007，取代 0001）、第三方依赖、测试基准、SO 代码许可、frac bits 宏、C++17 这些方向前先读对应 ADR。
+- 已做的架构决策及原因：`docs/adr/`。动到 backend 结构（ADR 0007，取代 0001）、第三方依赖、测试基准、SO 代码许可、frac bits 模板参数（ADR 0008，取代 0005）、C++17 这些方向前先读对应 ADR。
 
 ## 构建与测试
 
@@ -21,7 +21,7 @@ CMake + Ninja，`CMakePresets.json` 提供 `release` / `debug`。本机是 VS202
 cmake --preset release; cmake --build --preset release; ctest --preset release
 ```
 
-- 测试按配置 × backend 各编一个可执行文件（`fixed128_tests_frac36_round_avx2` / `..._scalar` 等；x86-64 上两个 backend 都编，标量版不开 AVX2），因为配置宏必须在一个程序的所有翻译单元里一致。`test_backend_determinism.cpp` 把所有结果哈希后与 AVX2 记录值比较，只有经作者确认的数值行为改动才能更新那些值。新增测试源文件要加进 `tests/CMakeLists.txt` 的 `FIXED128_TEST_SOURCES`。
+- 测试按舍入方式 × backend 各编一个可执行文件（`fixed128_tests_round_avx2` / `fixed128_tests_trunc_scalar` 等；x86-64 上两个 backend 都编，标量版不开 AVX2），因为配置宏必须在一个程序的所有翻译单元里一致。frac bits 是模板参数，每个可执行文件都用 `TEST_CASE_TEMPLATE` 测 `tests/test_helpers.hpp` 里 `FIXED128_TEST_FRAC_BITS` 列出的各个值。`test_backend_determinism.cpp` 把所有结果哈希后与 AVX2 记录值比较，只有经作者确认的数值行为改动才能更新那些值。新增测试源文件要加进 `tests/CMakeLists.txt` 的 `FIXED128_TEST_SOURCES`。
 - 本机可用 VS 自带的 `clang++`（`-DCMAKE_CXX_COMPILER=clang++`）验证 GCC 风格的 `-Wall -Wextra -Werror`；GCC 由 CI（`.github/workflows/ci.yml`）覆盖。
 - Benchmark 只看 Release：`build/release/benchmarks/fixed128_bench [名字子串]`。源码里的延迟/吞吐注释以 Ice Lake 为参照，用 uiCA 静态复现。
 
@@ -32,7 +32,7 @@ cmake --preset release; cmake --build --preset release; ctest --preset release
 - 定义域外输入（NaN、Inf、超范围）：作者的要求是 Release 下**零运行时开销**；需要检查时只在 Debug 下默认开启（规划中，见 `docs/test-and-benchmark-plan.md`）。
 - 正确性只以 `tests/reference.hpp`（纯整数精确实现）为准；标量 `fixed128` 也是被测对象，不是基准答案（ADR 0003）。
 - 浮点运算顺序是正确性的一部分（如 `(v_hi - magic) + v_lo`）。保持原有顺序；`config.hpp` 会在 fast-math 下 `#error`。
-- 魔数常量是 `detail` 里由 `FIXED128_FRAC_BITS` 推出的 `constexpr double`，在函数内用 `set1_d` 广播，没有全局动态初始化。
+- frac bits 是没有默认值的模板参数（`fixed128<FracBits>`、`double_to_fixed128_full<FracBits>` 等），不是宏，也不提供默认精度的别名（ADR 0008）。魔数常量是 `detail` 里以 `FracBits` 为参数的 `constexpr double` 变量模板，在函数内用 `set1_d` 广播，没有全局动态初始化。
 - `include/` 下的头文件保持 C++17，并且在 MSVC `/W4` 与 GCC/Clang `-Wall -Wextra` 下零警告（测试 target 以警告为错误）。进位 intrinsic 只在 x86-64 上用（`unsigned long long` 临时变量），其他平台走可移植代码。
 - 公开 API 在命名空间 `fx128`；仅供实现/测试用的放 `fx128::detail`。公开的 4-lane 类型（`double4`、`long4`、`ulong4`、`float4`）是各 backend 布局相同的 POD（`x, y, z, w` = lane 0..3）；x4 类型接受 4 个标量的构造函数也是 lane 0 在前。intrinsic 只出现在 `detail/avx2/` 与 `fx128::avx2` 互操作函数里。
 - **转换算法只写一次**，用 `detail` 的向量原语（`detail/avx2/native.hpp`、`detail/scalar/native.hpp`）。AVX2 原语必须恰好是一条 intrinsic，并且直接收发 `__m256i` / `__m256d`（包成结构体会让 MSVC 不再展开调用方的循环）；标量原语必须精确模拟对应指令（移位数 ≥ 64、按字节的 blendv 等）。改动后对比改前改后的汇编指令多重集（MSVC 与 Clang），见 ADR 0007。

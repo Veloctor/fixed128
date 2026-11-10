@@ -1,14 +1,22 @@
 #pragma once
 #include "reference.hpp"
 
+#include <doctest/doctest.h>
 #include <fixed128/fixed128.hpp>
 
 #include <array>
 #include <cstdint>
 #include <random>
+#include <type_traits>
 #include <vector>
 
-constexpr int kFracBits = FIXED128_FRAC_BITS;
+// The scales every scale-dependent test runs with (doctest TEST_CASE_TEMPLATE type list), one program for all of them.
+template <int N>
+using frac = std::integral_constant<int, N>;
+#define FIXED128_TEST_FRAC_BITS frac<36>, frac<0>
+TYPE_TO_STRING_AS("frac36", frac<36>);
+TYPE_TO_STRING_AS("frac0", frac<0>);
+
 constexpr ref::rounding kRounding = FIXED128_ROUND_HALF_AWAY_FROM_ZERO ? ref::rounding::half_away_from_zero : ref::rounding::trunc;
 
 // Fixed seed: failures are reproducible.
@@ -39,30 +47,30 @@ struct int_lanes
 inline int_lanes from_lanes(const lanes_i64& a) { return {a}; }
 inline fx128::double4 from_lanes(const lanes_f64& a) { return {a[0], a[1], a[2], a[3]}; }
 
-// Random double whose scaled magnitude |v| * 2^kFracBits lies in [2^min_log2, 2^max_log2).
-inline double random_scaled_double(std::mt19937_64& rng, int min_log2, int max_log2, bool allow_negative)
+// Random double whose scaled magnitude |v| * 2^frac_bits lies in [2^min_log2, 2^max_log2).
+inline double random_scaled_double(std::mt19937_64& rng, int min_log2, int max_log2, bool allow_negative, int frac_bits)
 {
 	std::uniform_int_distribution<int> exp_dist(min_log2, max_log2 - 1);
 	const uint64_t mant = rng() & 0xFFFFFFFFFFFFFull;
-	const int e = exp_dist(rng) - kFracBits; // |v| in [2^e, 2^(e+1))
+	const int e = exp_dist(rng) - frac_bits; // |v| in [2^e, 2^(e+1))
 	const uint64_t sign = allow_negative ? (rng() & 1) << 63 : 0;
 	return ref::double_of(sign | (static_cast<uint64_t>(e + 1023) << 52) | mant);
 }
 
-// v = (k + 0.5) / 2^kFracBits: exactly half-way between two representable fixed-point values.
-inline double random_halfway_double(std::mt19937_64& rng, bool allow_negative)
+// v = (k + 0.5) / 2^frac_bits: exactly half-way between two representable fixed-point values.
+inline double random_halfway_double(std::mt19937_64& rng, bool allow_negative, int frac_bits)
 {
 	const uint64_t k = rng() >> 12; // < 2^52, so 2k+1 < 2^53 is exact
-	double v = static_cast<double>(2 * k + 1) * ref::pow2(-1 - kFracBits);
+	double v = static_cast<double>(2 * k + 1) * ref::pow2(-1 - frac_bits);
 	return allow_negative && (rng() & 1) ? -v : v;
 }
 
 inline ref::u128 random_u128(std::mt19937_64& rng) { return {rng(), rng()}; }
 
 // Hand-picked scaled magnitudes (as log2 or exact values) that stress piece boundaries and rounding.
-inline std::vector<double> edge_scaled_values(bool is_signed)
+inline std::vector<double> edge_scaled_values(bool is_signed, int frac_bits)
 {
-	const double unit = ref::pow2(-kFracBits);
+	const double unit = ref::pow2(-frac_bits);
 	std::vector<double> v = {
 		0.0, unit, 2 * unit, 0.5 * unit, 1.5 * unit, 2.5 * unit,
 		ref::double_of(ref::bits_of(0.5) - 1) * unit, // just below half a unit

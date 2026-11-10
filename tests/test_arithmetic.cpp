@@ -6,8 +6,10 @@ using namespace fx128;
 
 namespace
 {
-	fixed128 to_fixed128(ref::u128 x) { return fixed128{static_cast<int64_t>(x.hi), static_cast<int64_t>(x.lo)}; }
-	ref::u128 to_ref(const fixed128& x) { return {x.upper, x.lower}; }
+	template <int F>
+	fixed128<F> to_fixed128(ref::u128 x) { return fixed128<F>{static_cast<int64_t>(x.hi), static_cast<int64_t>(x.lo)}; }
+	template <int F>
+	ref::u128 to_ref(const fixed128<F>& x) { return {x.upper, x.lower}; }
 
 	// Operands that exercise carries/borrows between the two halves.
 	ref::u128 random_operand(std::mt19937_64& rng)
@@ -30,34 +32,34 @@ namespace
 
 TEST_SUITE("arithmetic")
 {
-	TEST_CASE("fixed128 + - += -= wrap modulo 2^128")
+	TEST_CASE_TEMPLATE("fixed128 + - += -= wrap modulo 2^128", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
 		std::mt19937_64 rng(kSeed);
 		for (int i = 0; i < kRandomCount; ++i) {
 			const ref::u128 a = random_operand(rng), b = random_operand(rng);
 			const ref::u128 sum = ref::add(a, b), diff = ref::sub(a, b);
-			if (to_ref(to_fixed128(a) + to_fixed128(b)) != sum) log_mismatch(log, "+", a, b, to_ref(to_fixed128(a) + to_fixed128(b)), sum);
-			if (to_ref(to_fixed128(a) - to_fixed128(b)) != diff) log_mismatch(log, "-", a, b, to_ref(to_fixed128(a) - to_fixed128(b)), diff);
-			fixed128 x = to_fixed128(a);
-			x += to_fixed128(b);
+			if (to_ref(to_fixed128<F::value>(a) + to_fixed128<F::value>(b)) != sum) log_mismatch(log, "+", a, b, to_ref(to_fixed128<F::value>(a) + to_fixed128<F::value>(b)), sum);
+			if (to_ref(to_fixed128<F::value>(a) - to_fixed128<F::value>(b)) != diff) log_mismatch(log, "-", a, b, to_ref(to_fixed128<F::value>(a) - to_fixed128<F::value>(b)), diff);
+			fixed128<F::value> x = to_fixed128<F::value>(a);
+			x += to_fixed128<F::value>(b);
 			if (to_ref(x) != sum) log_mismatch(log, "+=", a, b, to_ref(x), sum);
-			x = to_fixed128(a);
-			x -= to_fixed128(b);
+			x = to_fixed128<F::value>(a);
+			x -= to_fixed128<F::value>(b);
 			if (to_ref(x) != diff) log_mismatch(log, "-=", a, b, to_ref(x), diff);
 		}
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("fixed128 += fixed64 adds the raw bits to the lower half with carry")
+	TEST_CASE_TEMPLATE("fixed128 += fixed64 adds the raw bits to the lower half with carry", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
 		std::mt19937_64 rng(kSeed);
 		for (int i = 0; i < kRandomCount; ++i) {
 			const ref::u128 a = random_operand(rng);
-			fixed64 f{0.0};
+			fixed64<F::value> f{0.0};
 			f.ubits = rng();
-			fixed128 x = to_fixed128(a);
+			fixed128<F::value> x = to_fixed128<F::value>(a);
 			x += f;
 			const ref::u128 expected = ref::add(a, {0, f.ubits});
 			if (to_ref(x) != expected) log_mismatch(log, "+=fixed64", a, {0, f.ubits}, to_ref(x), expected);
@@ -65,7 +67,7 @@ TEST_SUITE("arithmetic")
 		CHECK_NO_MISMATCH(log);
 	}
 
-	TEST_CASE("fixed128x4 operators match lane-wise 128-bit arithmetic")
+	TEST_CASE_TEMPLATE("fixed128x4 operators match lane-wise 128-bit arithmetic", F, FIXED128_TEST_FRAC_BITS)
 	{
 		mismatch_log log;
 		std::mt19937_64 rng(kSeed);
@@ -77,15 +79,15 @@ TEST_SUITE("arithmetic")
 				b[l] = random_operand(rng);
 				ah[l] = a[l].hi, al[l] = a[l].lo, bh[l] = b[l].hi, bl[l] = b[l].lo;
 			}
-			const fixed128x4 va{from_lanes(ah), from_lanes(al)}, vb{from_lanes(bh), from_lanes(bl)};
-			const fixed128x4 sum = va + vb, diff = va - vb;
-			const fixed128x4 sum_lo = va + from_lanes(bl), diff_lo = va - from_lanes(bl);
-			fixed128x4 acc = va;
+			const fixed128x4<F::value> va{from_lanes(ah), from_lanes(al)}, vb{from_lanes(bh), from_lanes(bl)};
+			const fixed128x4<F::value> sum = va + vb, diff = va - vb;
+			const fixed128x4<F::value> sum_lo = va + from_lanes(bl), diff_lo = va - from_lanes(bl);
+			fixed128x4<F::value> acc = va;
 			acc += vb;
 			acc -= from_lanes(bl);
 			for (int l = 0; l < 4; ++l) {
 				const ref::u128 lo_only{0, bl[l]};
-				struct { const char* op; const fixed128x4& v; ref::u128 expected; ref::u128 b; } cases[] = {
+				struct { const char* op; const fixed128x4<F::value>& v; ref::u128 expected; ref::u128 b; } cases[] = {
 					{"x4 +", sum, ref::add(a[l], b[l]), b[l]},
 					{"x4 -", diff, ref::sub(a[l], b[l]), b[l]},
 					{"x4 + long4", sum_lo, ref::add(a[l], lo_only), lo_only},

@@ -23,6 +23,9 @@
 using namespace fx128;
 using ankerl::nanobench::doNotOptimizeAway;
 
+// The scale the conversions are benchmarked at; their cost does not depend on it.
+constexpr int kFracBits = 36;
+
 namespace
 {
 	constexpr size_t kVectors = 256; // 256 x 32 bytes = 8 KiB per input array, stays in L1
@@ -33,7 +36,7 @@ namespace
 	{
 		std::uniform_int_distribution<int> exp_dist(min_log2, max_log2 - 1);
 		const uint64_t sign = allow_negative ? (rng() & 1) << 63 : 0;
-		const uint64_t bits = sign | (static_cast<uint64_t>(exp_dist(rng) - FIXED128_FRAC_BITS + 1023) << 52) | (rng() & 0xFFFFFFFFFFFFFull);
+		const uint64_t bits = sign | (static_cast<uint64_t>(exp_dist(rng) - kFracBits + 1023) << 52) | (rng() & 0xFFFFFFFFFFFFFull);
 		double d;
 		std::memcpy(&d, &bits, sizeof d);
 		return d;
@@ -72,8 +75,8 @@ int main(int argc, char** argv)
 	runner r{argc > 1 ? argv[1] : ""};
 	std::mt19937_64 rng(2022);
 
-	const auto d_int64 = random_vectors<double4>(rng, 0 + FIXED128_FRAC_BITS, 63 + FIXED128_FRAC_BITS, true);
-	const auto d_uint64 = random_vectors<double4>(rng, 0 + FIXED128_FRAC_BITS, 64 + FIXED128_FRAC_BITS, false);
+	const auto d_int64 = random_vectors<double4>(rng, 0 + kFracBits, 63 + kFracBits, true);
+	const auto d_uint64 = random_vectors<double4>(rng, 0 + kFracBits, 64 + kFracBits, false);
 	const auto d_fixed128 = random_vectors<double4>(rng, -8, 127, true);
 	const auto d_ufixed128 = random_vectors<double4>(rng, -8, 128, false);
 	const auto i_bits = random_vectors<ulong4>(rng, 0, 0, false);
@@ -113,38 +116,38 @@ int main(int argc, char** argv)
 	r.run(throughput, "double -> fixed128 (scalar fixed128, baseline)", [&] {
 		for (size_t i = 0; i < kVectors; ++i) {
 			const double4& in = d_fixed128[i];
-			const fixed128x4 v{fixed128{in.x}, fixed128{in.y}, fixed128{in.z}, fixed128{in.w}};
+			const fixed128x4<kFracBits> v{fixed128<kFracBits>{in.x}, fixed128<kFracBits>{in.y}, fixed128<kFracBits>{in.z}, fixed128<kFracBits>{in.w}};
 			out_hi[i] = v.upper;
 			out_lo[i] = v.lower;
 		}
 		doNotOptimizeAway(out_lo.data());
 	});
 	r.run(throughput, "double -> fixed128 (double_to_fixed128_full)", [&] {
-		for (size_t i = 0; i < kVectors; ++i) double_to_fixed128_full(d_fixed128[i], out_hi[i], out_lo[i]);
+		for (size_t i = 0; i < kVectors; ++i) double_to_fixed128_full<kFracBits>(d_fixed128[i], out_hi[i], out_lo[i]);
 		doNotOptimizeAway(out_lo.data());
 	});
 	r.run(throughput, "double -> ufixed128 (double_to_ufixed128_full)", [&] {
-		for (size_t i = 0; i < kVectors; ++i) double_to_ufixed128_full(d_ufixed128[i], out_hi[i], out_lo[i]);
+		for (size_t i = 0; i < kVectors; ++i) double_to_ufixed128_full<kFracBits>(d_ufixed128[i], out_hi[i], out_lo[i]);
 		doNotOptimizeAway(out_lo.data());
 	});
 	r.run(throughput, "fixed128 -> double (scalar fixed128, baseline)", [&] {
 		for (size_t i = 0; i < kVectors; ++i) {
-			const fixed128x4 v{i_bits[i], i_bits2[i]};
+			const fixed128x4<kFracBits> v{i_bits[i], i_bits2[i]};
 			out_d[i] = double4{static_cast<double>(v[0]), static_cast<double>(v[1]), static_cast<double>(v[2]), static_cast<double>(v[3])};
 		}
 		doNotOptimizeAway(out_d.data());
 	});
 	r.run(throughput, "fixed128 -> double (fixed128_to_double)", [&] {
-		for (size_t i = 0; i < kVectors; ++i) out_d[i] = fixed128_to_double(i_bits[i], i_bits2[i]);
+		for (size_t i = 0; i < kVectors; ++i) out_d[i] = fixed128_to_double<kFracBits>(i_bits[i], i_bits2[i]);
 		doNotOptimizeAway(out_d.data());
 	});
 	r.run(throughput, "ufixed128 -> double (ufixed128_to_double)", [&] {
-		for (size_t i = 0; i < kVectors; ++i) out_d[i] = ufixed128_to_double(i_bits[i], i_bits2[i]);
+		for (size_t i = 0; i < kVectors; ++i) out_d[i] = ufixed128_to_double<kFracBits>(i_bits[i], i_bits2[i]);
 		doNotOptimizeAway(out_d.data());
 	});
 	r.run(throughput, "fixed128x4 a - b -> double (relative position)", [&] {
 		for (size_t i = 0; i + 1 < kVectors; ++i) {
-			const fixed128x4 a{i_bits[i], i_bits2[i]}, b{i_bits[i + 1], i_bits2[i + 1]};
+			const fixed128x4<kFracBits> a{i_bits[i], i_bits2[i]}, b{i_bits[i + 1], i_bits2[i + 1]};
 			out_d[i] = static_cast<double4>(a - b);
 		}
 		doNotOptimizeAway(out_d.data());
@@ -156,8 +159,8 @@ int main(int argc, char** argv)
 	double4 chain = d_fixed128[0];
 	r.run(latency, "double -> fixed128 -> double round trip", [&] {
 		ulong4 hi, lo;
-		double_to_fixed128_full(chain, hi, lo);
-		chain = fixed128_to_double(hi, lo);
+		double_to_fixed128_full<kFracBits>(chain, hi, lo);
+		chain = fixed128_to_double<kFracBits>(hi, lo);
 		doNotOptimizeAway(chain);
 	});
 	chain = d_int64[0];

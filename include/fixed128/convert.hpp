@@ -26,14 +26,13 @@ namespace fx128
 			return r;
 		}
 
-		// Magic numbers for the double<>fixed128 conversions, depending on FIXED128_FRAC_BITS.
-		constexpr int frac_bits = FIXED128_FRAC_BITS;
-		constexpr double majik_d_hm = pow2(100 - frac_bits) + pow2(132 - frac_bits);
-		constexpr double majik_d_lo = pow2(52 - frac_bits);
-		constexpr double majik_d_mi = pow2(100 - frac_bits);
-		constexpr double majik_d_hi = pow2(132 - frac_bits);
-		constexpr double majik_d_hms = pow2(100 - frac_bits) + pow2(132 - frac_bits) + pow2(127 - frac_bits);
-		constexpr double majik_d_his = pow2(132 - frac_bits) + pow2(127 - frac_bits);
+		// Magic numbers for the double<>fixed128 conversions, depending on the number of fractional bits.
+		template<int FracBits> constexpr double majik_d_hm = pow2(100 - FracBits) + pow2(132 - FracBits);
+		template<int FracBits> constexpr double majik_d_lo = pow2(52 - FracBits);
+		template<int FracBits> constexpr double majik_d_mi = pow2(100 - FracBits);
+		template<int FracBits> constexpr double majik_d_hi = pow2(132 - FracBits);
+		template<int FracBits> constexpr double majik_d_hms = pow2(100 - FracBits) + pow2(132 - FracBits) + pow2(127 - FracBits);
+		template<int FracBits> constexpr double majik_d_his = pow2(132 - FracBits) + pow2(127 - FracBits);
 	}
 
 #pragma region Full-range int64_to_double conversions from wim on Stack Overflow
@@ -136,13 +135,14 @@ namespace fx128
 
 	//works for full unsigned fixed128 range, otherwise result undefined
 	//11 instructions, total latency: 23, total throughput CPI: 4.7
+	template<int FracBits>
 	inline double4 ufixed128_to_double(const ulong4& upper, const ulong4& lower)//maybe low 48bit cannot round off with 0.5ULP, 1ULP error
 	{
 		using namespace detail;
-		const vd majik_lo = set1_d(detail::majik_d_lo);
-		const vd majik_hm = set1_d(detail::majik_d_hm);
-		const vi majik_i_mi = as_i(set1_d(detail::majik_d_mi));
-		const vi majik_i_hi = as_i(set1_d(detail::majik_d_hi));
+		const vd majik_lo = set1_d(detail::majik_d_lo<FracBits>);
+		const vd majik_hm = set1_d(detail::majik_d_hm<FracBits>);
+		const vi majik_i_mi = as_i(set1_d(detail::majik_d_mi<FracBits>));
+		const vi majik_i_hi = as_i(set1_d(detail::majik_d_hi<FracBits>));
 		const vi ihigh = load(upper), ilow = load(lower);
 		//majik operations											//Latency, Throughput(references IceLake)
 		vi v_lo = blend_hi16(ilow, as_i(majik_lo));					//L1, T1/2
@@ -161,13 +161,14 @@ namespace fx128
 
 	//works for full fixed128 range, otherwise result undefined
 	//11 instructions, total latency: 23, total throughput CPI: 4.7
+	template<int FracBits>
 	inline double4 fixed128_to_double(const ulong4& upper, const ulong4& lower)//maybe low 48bit cannot round off with 0.5ULP, 1ULP error
 	{
 		using namespace detail;
-		const vd majik_lo = set1_d(detail::majik_d_lo);
-		const vd majik_hms = set1_d(detail::majik_d_hms);
-		const vi majik_i_mi = as_i(set1_d(detail::majik_d_mi));
-		const vi majik_i_his = as_i(set1_d(detail::majik_d_his));
+		const vd majik_lo = set1_d(detail::majik_d_lo<FracBits>);
+		const vd majik_hms = set1_d(detail::majik_d_hms<FracBits>);
+		const vi majik_i_mi = as_i(set1_d(detail::majik_d_mi<FracBits>));
+		const vi majik_i_his = as_i(set1_d(detail::majik_d_his<FracBits>));
 		const vi ihigh = load(upper), ilow = load(lower);
 		//majik operations											//Latency, Throughput(references IceLake)
 		vi v_lo = blend_hi16(ilow, as_i(majik_lo));					//L1, T1/2
@@ -192,14 +193,15 @@ namespace fx128
 
 	//works for full unsigned fixed128 range, otherwise result undefined
 	//instruction total latency: 30(trunc), total throughput CPI: 10.8(trunc) (references IceLake); round half away: +2 instructions (add, srli) on the low path
+	template<int FracBits>
 	inline void double_to_ufixed128_full(const double4& in, ulong4& outUpper, ulong4& outLower)
 	{
 		using namespace detail;
 		//constants
 		const vi mat_mask = set1_i(0x0FFFFFFFFFFFFF);	//0_00000000000_1111111111111111111111111111111111111111111111111111
 		const vi hidden_1 = set1_i(0x10000000000000);	//0_00000000001_0000000000000000000000000000000000000000000000000000//you can reduce this constant by add 1 to mat_mask, inc more 1/3 clock throughput
-		const vi exp_lbias = set1_i(1023LL + 52 - FIXED128_FRAC_BITS);
-		const vi exp_hbias = set1_i(1023LL + 52 + 64 - FIXED128_FRAC_BITS);
+		const vi exp_lbias = set1_i(1023LL + 52 - FracBits);
+		const vi exp_hbias = set1_i(1023LL + 52 + 64 - FracBits);
 		const vi zero256 = zero_i();
 		//majik operations								//Latency, Throughput
 		vi bin = as_i(load(in));
@@ -215,7 +217,7 @@ namespace fx128
 		vi exp_lfrac = sub_i(exp_enc, exp_lbias);		//1,1/3
 		vi lmsl = sllv(mat, exp_lfrac);					//1,1/2
 #if FIXED128_ROUND_HALF_AWAY_FROM_ZERO
-		const vi exp_lbias_m1 = set1_i(1023LL + 52 - FIXED128_FRAC_BITS - 1);
+		const vi exp_lbias_m1 = set1_i(1023LL + 52 - FracBits - 1);
 		const vi one256 = set1_i(1);
 		const vi minus_one256 = set1_i(-1);
 		vi exp_lfrac_n1 = sub_i(exp_lbias_m1, exp_enc);	//1,1/3		n - 1
@@ -233,14 +235,15 @@ namespace fx128
 
 	//works for full fixed128 range, otherwise result undefined
 	//instruction total latency: 36(trunc), total throughput CPI: 12.2(trunc) (references IceLake); round half away: +2 instructions (add, srli) on the low path
+	template<int FracBits>
 	inline void double_to_fixed128_full(const double4& in, ulong4& outUpper, ulong4& outLower)
 	{
 		using namespace detail;
 		//constants
 		const vi mat_mask = set1_i(0x0FFFFFFFFFFFFF);	//0_00000000000_1111111111111111111111111111111111111111111111111111
 		const vi hidden_1 = set1_i(0x10000000000000);	//0_00000000001_0000000000000000000000000000000000000000000000000000
-		const vi exp_lbias = set1_i(1023LL + 52 - FIXED128_FRAC_BITS);
-		const vi exp_hbias = set1_i(1023LL + 52 + 64 - FIXED128_FRAC_BITS);
+		const vi exp_lbias = set1_i(1023LL + 52 - FracBits);
+		const vi exp_hbias = set1_i(1023LL + 52 + 64 - FracBits);
 		const vi zero256 = zero_i();
 		//majik operations								//Latency, Throughput
 		const vd v = load(in);
@@ -254,7 +257,7 @@ namespace fx128
 		vi lmsl = sllv(mat, exp_lfrac);					//1,1/2
 #if FIXED128_ROUND_HALF_AWAY_FROM_ZERO
 		// rounds the magnitude, see the comment above double_to_ufixed128_full
-		const vi exp_lbias_m1 = set1_i(1023LL + 52 - FIXED128_FRAC_BITS - 1);
+		const vi exp_lbias_m1 = set1_i(1023LL + 52 - FracBits - 1);
 		const vi one256 = set1_i(1);
 		const vi minus_one256 = set1_i(-1);
 		vi exp_lfrac_n1 = sub_i(exp_lbias_m1, exp_enc);	//1,1/3		n - 1

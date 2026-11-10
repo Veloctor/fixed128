@@ -59,22 +59,23 @@ namespace
 		return v;
 	}
 
+	template <int FracBits>
 	uint64_t hash_all_results()
 	{
 		fnv1a h;
 		std::mt19937_64 rng(kSeed);
 		for (int i = 0; i < 1 << 14; ++i) {
 			ulong4 hi, lo;
-			double_to_fixed128_full(raw_double4(rng, -8, 127, kFracBits, true), hi, lo);
+			double_to_fixed128_full<FracBits>(raw_double4(rng, -8, 127, FracBits, true), hi, lo);
 			h.add(hi), h.add(lo);
-			h.add(fixed128_to_double(hi, lo));
-			double_to_ufixed128_full(raw_double4(rng, -8, 128, kFracBits, false), hi, lo);
+			h.add(fixed128_to_double<FracBits>(hi, lo));
+			double_to_ufixed128_full<FracBits>(raw_double4(rng, -8, 128, FracBits, false), hi, lo);
 			h.add(hi), h.add(lo);
-			h.add(ufixed128_to_double(hi, lo));
+			h.add(ufixed128_to_double<FracBits>(hi, lo));
 
 			ulong4 rhi = raw_ulong4(rng), rlo = raw_ulong4(rng);
-			h.add(fixed128_to_double(rhi, rlo));
-			h.add(ufixed128_to_double(rhi, rlo));
+			h.add(fixed128_to_double<FracBits>(rhi, rlo));
+			h.add(ufixed128_to_double<FracBits>(rhi, rlo));
 
 			h.add(double_to_int64_fast(raw_double4(rng, -4, 63, 0, true)));
 			h.add(double_to_uint64_fast(raw_double4(rng, -4, 64, 0, false)));
@@ -84,13 +85,13 @@ namespace
 			h.add(int64_to_double_fast_precise(sints));
 			h.add(uint64_to_double_fast_precise(ints));
 
-			const fixed64x4 f64{raw_double4(rng, -8, 62, kFracBits, true)};
+			const fixed64x4<FracBits> f64{raw_double4(rng, -8, 62, FracBits, true)};
 			h.add(f64.bits);
 			h.add(static_cast<double4>(f64));
 
-			const fixed128x4 a{rhi, rlo}, b{hi, lo};
-			const fixed128x4 sum = a + b, diff = a - b, sum_lo = a + lo, diff_lo = a - lo;
-			for (const fixed128x4* r : {&sum, &diff, &sum_lo, &diff_lo}) h.add(r->upper), h.add(r->lower);
+			const fixed128x4<FracBits> a{rhi, rlo}, b{hi, lo};
+			const fixed128x4<FracBits> sum = a + b, diff = a - b, sum_lo = a + lo, diff_lo = a - lo;
+			for (const fixed128x4<FracBits>* r : {&sum, &diff, &sum_lo, &diff_lo}) h.add(r->upper), h.add(r->lower);
 		}
 		return h.h;
 	}
@@ -107,17 +108,18 @@ namespace
 		{36, 1, 0x469714c9cfe26938ull},
 		{36, 0, 0xedb82735adc905d3ull},
 		{0, 1, 0xe2bafe041f60ef50ull},
+		{0, 0, 0xb60fe3dbc91df283ull}, // recorded from the macro-based headers of 391d796 (AVX2 and scalar agree)
 	};
 }
 
 TEST_SUITE("backend determinism")
 {
-	TEST_CASE("all results hash to the value recorded from the AVX2 backend")
+	TEST_CASE_TEMPLATE("all results hash to the value recorded from the AVX2 backend", F, FIXED128_TEST_FRAC_BITS)
 	{
-		const uint64_t got = hash_all_results();
+		const uint64_t got = hash_all_results<F::value>();
 		const golden* expected = nullptr;
 		for (const golden& g : kGolden)
-			if (g.frac_bits == kFracBits && g.round_half_away == FIXED128_ROUND_HALF_AWAY_FROM_ZERO) expected = &g;
+			if (g.frac_bits == F::value && g.round_half_away == FIXED128_ROUND_HALF_AWAY_FROM_ZERO) expected = &g;
 		if (!expected) {
 			std::printf("no recorded hash for this configuration; result hash = 0x%016llx\n", (unsigned long long)got);
 			return;
