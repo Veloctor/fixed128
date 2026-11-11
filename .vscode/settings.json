@@ -1,0 +1,5 @@
+{
+	// Let CMake Tools supply include paths, defines and compiler to IntelliSense.
+	"C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+	"C_Cpp.default.cppStandard": "c++17"
+}
